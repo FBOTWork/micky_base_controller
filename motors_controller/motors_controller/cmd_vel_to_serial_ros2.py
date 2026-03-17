@@ -14,7 +14,7 @@ class CmdVelToSerial(Node):
         super().__init__('cmd_vel_to_serial_node')
         
         # Parâmetros de conexão
-        self.declare_parameter('port', '/dev/ttyUSB0')
+        self.declare_parameter('port', '/dev/arduino_robo')
         self.declare_parameter('baud', 115200)
         
         port = self.get_parameter('port').get_parameter_value().string_value

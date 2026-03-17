@@ -19,7 +19,7 @@ def generate_launch_description():
         name='cmd_vel_to_serial_ros2',
         output='screen',
         parameters=[
-            {'port': '/dev/ttyUSB0'},
+            {'port': '/dev/arduino_robo'},
             {'baudrate': 115200}
         ]
 
