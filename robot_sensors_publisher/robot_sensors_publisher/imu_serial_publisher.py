@@ -24,7 +24,7 @@ class ImuSerialPublisher(Node):
         # PARAMETROS
         # =========================
 
-        self.declare_parameter('port', '/dev/ttyUSB0')
+        self.declare_parameter('port', '/dev/arduino_robo')
         self.declare_parameter('baudrate', 115200)
 
         port = self.get_parameter('port').value
