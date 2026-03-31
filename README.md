@@ -31,33 +31,119 @@ O processo abaixo é para o primeiro uso com um Arduino novo. Se o seu Arduino j
 
 ### 2.a Permissão da porta USB e nome fixo `arduino_robo`
 
-Por padrão em Linux, o dispositivo USB do Arduino pode ser criado como `/dev/ttyUSB0` ou `/dev/ttyACM0`, dependendo do modelo. Para evitar problemas de permissão e manter sempre o mesmo nome de dispositivo, use uma regra udev:
+Passo a passo completo para identificar o Arduino, criar regra udev e manter um link estável `/dev/arduino_robo`.
 
-1. Crie arquivo de regras: `/etc/udev/rules.d/99-arduino_robo.rules`.
-2. Insira (substitua os IDs do fabricante/produto conforme seu dispositivo):
+#### 1. Descobrir o Arduino no sistema
+
+Conecte o Arduino e rode:
+
+```bash
+ls /dev/tty*
+```
+
+Normalmente aparece `/dev/ttyUSB0` ou `/dev/ttyACM0`.
+
+Agora pegue mais detalhes:
+
+```bash
+udevadm info -a -n /dev/ttyACM0
+```
+
+(substitua pelo dispositivo que apareceu no seu sistema).
+
+#### 2. Identificar atributos únicos
+
+Procure por `idVendor`, `idProduct` e `serial`:
+
+```text
+ATTRS{idVendor}=="2341"
+ATTRS{idProduct}=="0043"
+```
+
+Se nenhum `idVendor/idProduct` aparecer no primeiro bloco, pode estar em um dos níveis seguintes. Verifique com:
+
+```bash
+udevadm info -a -n /dev/ttyACM0 | grep -E 'idVendor|idProduct|serial'
+```
+
+#### 3. Criar a regra udev
+
+Crie o arquivo:
+
+```bash
+sudo nano /etc/udev/rules.d/99-arduino_robo.rules
+```
+
+Insira:
 
 ```bash
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", MODE="0666", SYMLINK+="arduino_robo"
 ```
 
-- `idVendor` e `idProduct` podem ser obtidos com `lsusb`.
-- `MODE="0666"` garante leitura/gravação para todos usuários (ajuste conforme segurança desejada).
-- `SYMLINK+="arduino_robo"` cria `/dev/arduino_robo` apontando para o dispositivo real.
+Isso criará:
 
-3. Recarrregue regras udev e reconecte o Arduino:
+- `/dev/arduino_robo`
+
+Se quiser evitar `sudo` para todos, use `MODE="0666"` ou `MODE="0660", GROUP="dialout"` e adicione seu usuário ao grupo dialout:
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+#### 4. Recarregar regras
 
 ```bash
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-4. Verifique:
+#### 5. Testar
+
+Desconecte e reconecte o Arduino:
 
 ```bash
-ls -l /dev/arduino_robo
+ls /dev/arduino_robo
 ```
 
-5. No código ou launch ROS, use `/dev/arduino_robo` como porta serial.
+Se aparecer, está funcionando.
+
+#### 6. Casos especiais e dicas
+
+- Clones CH340 e CP2102 usam outros IDs:
+  - CH340: `ATTRS{idVendor}=="1a86"`, `ATTRS{idProduct}=="7523"`
+  - CP2102: `ATTRS{idVendor}=="10c4"`, `ATTRS{idProduct}=="ea60"`
+
+- Se não houver `idVendor/idProduct`, use parâmetros de caminho/mestre:
+
+```bash
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", SYMLINK+="arduino_robo"
+```
+
+ou (mais preciso):
+
+```bash
+SUBSYSTEM=="tty", ATTRS{devpath}=="1.3", SYMLINK+="arduino_robo"
+```
+
+- Para distinguir múltiplos Arduinos:
+
+```bash
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", ATTRS{serial}=="ABC123", SYMLINK+="arduino_robo"
+```
+
+#### 7. Uso no ROS
+
+No `motors_controller`/`robot_sensors_publisher`, use `/dev/arduino_robo` como porta serial padrão.
+
+Exemplo no ROS2 launch ou parâmetro do node:
+
+```bash
+ros2 param set /imu_serial_publisher port /dev/arduino_robo
+```
+
+---
+
+Use este fluxo para deixar a conexão robusta entre reboot/conexões e evitar falhas pelo nome dinâmico `/dev/ttyACM*`.
 
 ### 3. Instalar os pacotes ROS 2
 
