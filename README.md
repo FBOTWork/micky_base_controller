@@ -13,10 +13,21 @@ Este repositório contém o controle base do robô Micky, incluindo firmware e n
 
 ### 2. Compilar e carregar o firmware
 
-1. Abra o Arduino IDE ou PlatformIO.
-2. Carregue `firmware_micro_controller/firmware.ino` no MCU.
-3. Configure a porta serial e board correta.
-4. Envie o firmware.
+O processo abaixo é para o primeiro uso com um Arduino novo. Se o seu Arduino já tiver o firmware `micky_base_controller` gravado, você pode pular a etapa de upload e ir direto para a configuração do ROS 2 e do link `/dev/arduino_robo`.
+
+2.1. Primeiro uso (Arduino novo)
+
+1. Instale o Arduino IDE ou PlatformIO:
+   - Arduino IDE: https://www.arduino.cc/en/software
+   - PlatformIO: https://platformio.org/
+2. Abra o Arduino IDE ou PlatformIO.
+3. Abra `firmware_micro_controller/firmware.ino`.
+4. Selecione a placa (por exemplo, "Arduino Uno") e a porta serial (`/dev/ttyACM0` ou `/dev/ttyUSB0`).
+5. Clique em Upload.
+
+2.2. Uso subsequente (firmware já carregado)
+
+- Se você já tiver o firmware no Arduino e não precisar recarregar, pode pular a etapa de upload e seguir direto para a seção 2.a (permissão porta USB) e depois 3 (build ROS 2).
 
 ### 2.a Permissão da porta USB e nome fixo `arduino_robo`
 
