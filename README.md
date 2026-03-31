@@ -18,6 +18,36 @@ Este repositório contém o controle base do robô Micky, incluindo firmware e n
 3. Configure a porta serial e board correta.
 4. Envie o firmware.
 
+### 2.a Permissão da porta USB e nome fixo `arduino_robo`
+
+Por padrão em Linux, o dispositivo USB do Arduino pode ser criado como `/dev/ttyUSB0` ou `/dev/ttyACM0`, dependendo do modelo. Para evitar problemas de permissão e manter sempre o mesmo nome de dispositivo, use uma regra udev:
+
+1. Crie arquivo de regras: `/etc/udev/rules.d/99-arduino_robo.rules`.
+2. Insira (substitua os IDs do fabricante/produto conforme seu dispositivo):
+
+```bash
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", MODE="0666", SYMLINK+="arduino_robo"
+```
+
+- `idVendor` e `idProduct` podem ser obtidos com `lsusb`.
+- `MODE="0666"` garante leitura/gravação para todos usuários (ajuste conforme segurança desejada).
+- `SYMLINK+="arduino_robo"` cria `/dev/arduino_robo` apontando para o dispositivo real.
+
+3. Recarrregue regras udev e reconecte o Arduino:
+
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+4. Verifique:
+
+```bash
+ls -l /dev/arduino_robo
+```
+
+5. No código ou launch ROS, use `/dev/arduino_robo` como porta serial.
+
 ### 3. Instalar os pacotes ROS 2
 
 No workspace principal `/home/fbot/micky_base_controller`:
