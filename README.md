@@ -1,1 +1,61 @@
 # Micky_Base_Controller
+
+## Tutorial de Configuração e Uso
+
+Este repositório contém o controle base do robô Micky, incluindo firmware e nós ROS 2 para controle de motores e publicação de sensores.
+
+### 1. Requisitos
+
+- Linux (Ubuntu)
+- ROS 2 (Humble)
+- Dependências Python: instaladas via `pip` usando `setup.py`
+- Microcontrolador com firmware (arquivo `firmware_micro_controller/firmware.ino`)
+
+### 2. Compilar e carregar o firmware
+
+1. Abra o Arduino IDE ou PlatformIO.
+2. Carregue `firmware_micro_controller/firmware.ino` no MCU.
+3. Configure a porta serial e board correta.
+4. Envie o firmware.
+
+### 3. Instalar os pacotes ROS 2
+
+No workspace principal `/home/fbot/micky_base_controller`:
+
+```bash
+source /opt/ros/<distro>/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+### 4. Executar o controlador de motores
+
+```bash
+ros2 launch motors_controller motors_controller.launch.py
+```
+
+### 5. Executar o publicador de sensores IMU
+
+```bash
+ros2 launch robot_sensors_publisher imu_sensor_publisher.launch.py
+```
+
+### 6. Teste de envio de velocidade
+
+```bash
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "linear: {x: 0.2, y: 0.0, z: 0.0} angular: {x: 0.0, y: 0.0, z: 0.1}" --once
+```
+
+### 7. Verificar tópicos
+
+```bash
+ros2 topic echo /imu/data
+ros2 topic echo /wheel_encoders
+```
+
+### 8. Estrutura do repositório
+
+- `firmware_micro_controller/`: firmware do MCU
+- `motors_controller/`: nodo ROS 2 para motor via serial
+- `robot_sensors_publisher/`: nodo ROS 2 para IMU via serial
+
