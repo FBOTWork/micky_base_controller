@@ -2,28 +2,24 @@
 
 Sistema de controle para robô diferencial utilizando **Arduino Mega** como controlador de baixo nível e **ROS2** para controle de alto nível.
 
-O projeto é dividido em módulos responsáveis pelo controle dos motores e publicação de sensores, permitindo integração completa com o ecossistema ROS2.
-
 ---
 
 ## 🧠 Visão geral
 
-Este sistema segue a arquitetura clássica de robótica:
+* **ROS2** → controle e tomada de decisão
+* **Arduino Mega** → execução (motores)
 
-* **ROS2** → tomada de decisão (alto nível)
-* **Arduino Mega** → execução (baixo nível)
-
-O Arduino roda um firmware responsável por interpretar comandos recebidos via serial e controlar diretamente os motores do robô.
+O Arduino roda o `firmware.ino`, responsável por interpretar comandos recebidos e controlar o robô.
 
 ---
 
 ## 📦 Estrutura do repositório
 
-```bash
+```bash id="qz9k2p"
 micky_base_controller/
-│── firmware_micro_controller/   # Firmware do Arduino (firmware.ino)
-│── motors_controller/           # Controle dos motores via ROS2
-│── robot_sensors_publisher/     # Publicação de sensores no ROS2
+│── firmware_micro_controller/   # Firmware do Arduino
+│── motors_controller/           # Controle dos motores (ROS2)
+│── robot_sensors_publisher/     # Publicação de sensores (ROS2)
 │── README.md
 ```
 
@@ -32,47 +28,94 @@ micky_base_controller/
 ## 🚀 Funcionalidades
 
 * Controle de robô diferencial
-* Comunicação ROS2 ↔ Arduino via serial
-* Controle de velocidade linear e angular (`cmd_vel`)
-* Modularização do sistema (motores + sensores)
-* Base pronta para expansão com autonomia
+* Integração com ROS2
+* Controle via tópico `/cmd_vel`
+* Publicação de dados de sensores (IMU)
+* Arquitetura modular
 
 ---
 
-## 🛠️ Tecnologias utilizadas
+## 🛠️ Tecnologias
 
 * Arduino Mega 2560
-* ROS2 (Humble ou similar)
-* C++ (ROS2 nodes)
-* Arduino (C/C++)
-* Comunicação Serial (USB)
+* ROS2
+* C++
+* Comunicação Serial
 
 ---
 
 ## ⚙️ Como usar
 
-### 🔹 1. Upload do firmware no Arduino
+### 🔹 1. Instalar Arduino IDE
 
-1. Acesse a pasta:
+1. Acesse: https://www.arduino.cc/en/software
+2. Baixe e instale normalmente
 
-```bash
+---
+
+### 🔹 2. Configurar permissão da porta USB (Linux)
+
+Para evitar erros de permissão ao acessar o Arduino:
+
+#### Adicionar usuário ao grupo `dialout`
+
+```bash id="q8d3vp"
+sudo usermod -aG dialout $USER
+```
+
+Depois disso:
+
+* **Reinicie o sistema** ou faça logout/login
+
+---
+
+#### (Opcional) Criar regra udev
+
+Crie o arquivo:
+
+```bash id="m8w4zf"
+sudo nano /etc/udev/rules.d/99-arduino.rules
+```
+
+Adicione:
+
+```id="z5c7yr"
+KERNEL=="ttyACM*", MODE="0666"
+```
+
+Salve e aplique:
+
+```bash id="f2x9hc"
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+---
+
+### 🔹 3. Upload do firmware
+
+1. Vá até:
+
+```id="1j3p9k"
 firmware_micro_controller/
 ```
 
-2. Abra o arquivo `firmware.ino` na Arduino IDE
+2. Abra `firmware.ino` na Arduino IDE
 
-3. Configure:
+3. Conecte o Arduino Mega
+
+4. Configure:
 
 * Placa: **Arduino Mega 2560**
 * Porta correta
 
-4. Clique em **Upload**
+5. Clique em **Upload**
 
 ---
 
-### 🔹 2. Build do ROS2
+### 🔹 4. Build do ROS2
 
-```bash
+```bash id="r6k1vd"
 cd ~/ros2_ws
 colcon build
 source install/setup.bash
@@ -80,107 +123,70 @@ source install/setup.bash
 
 ---
 
-### 🔹 3. Executar os nós
+### 🔹 5. Executar o sistema
 
-#### Controle de motores:
+#### 🔸 Controle dos motores
 
-```bash
-ros2 run motors_controller <nome_do_node>
+```bash id="c7m2xo"
+ros2 launch motors_controller motors_controller.launch.py
 ```
 
-#### Sensores:
+#### 🔸 Sensores (IMU)
 
-```bash
-ros2 run robot_sensors_publisher <nome_do_node>
-```
-
----
-
-### 🔹 4. Enviar comandos para o robô
-
-```bash
-ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}, angular: {z: 0.0}}"
+```bash id="v9n5re"
+ros2 launch robot_sensors_publisher imu_sensor_publisher.launch.py
 ```
 
 ---
 
-## 📡 Comunicação Serial
+### 🔹 6. Controle manual (Teleop)
 
-O ROS2 envia comandos para o Arduino no formato:
+Instale:
 
-```bash
-Vx;Wz
+```bash id="k4t8dz"
+sudo apt install ros-humble-teleop-twist-keyboard
 ```
 
-Exemplo:
+Execute:
 
-```bash
-0.2;0.1
+```bash id="y2p6xn"
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
-Onde:
+Controles:
 
-* `Vx` → velocidade linear
-* `Wz` → velocidade angular
+```id="b6r4mw"
+i → frente
+, → ré
+j → esquerda
+l → direita
+k → parar
+```
 
 ---
 
-## ⚡ Funcionamento do firmware
+### 🔹 7. Enviar comandos manualmente (alternativo)
 
-O `firmware.ino` é responsável por:
+```bash id="g8v2qk"
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}, angular: {z: 0.1}}"
+```
 
-* Ler dados da serial
-* Interpretar comandos recebidos
-* Calcular velocidades das rodas
-* Aplicar PWM nos motores
+---
 
-Fluxo:
+## ⚡ Firmware (`firmware.ino`)
 
-1. Recebe comando via serial
-2. Faz parsing (`Vx;Wz`)
-3. Converte para controle diferencial
-4. Aciona motores
+Responsável por:
+
+* Receber comandos
+* Interpretar velocidade linear e angular
+* Controlar motores com PWM
 
 ---
 
 ## 🎮 Controle do robô
 
-O robô utiliza cinemática diferencial:
-
 * Frente / Ré → velocidade linear
 * Giro → velocidade angular
 * Curvas → combinação dos dois
-
----
-
-## 🔧 Possíveis melhorias
-
-* Implementação de odometria
-* Uso de encoders
-* Controle PID nos motores
-* Integração com IMU
-* Migração para micro-ROS
-* Adição de câmera / visão computacional
-
----
-
-## 🐛 Problemas conhecidos
-
-* Dependência de comunicação serial USB
-* Possível latência nos comandos
-* Sem feedback de posição atualmente
-
----
-
-## 📄 Licença
-
-Projeto para fins educacionais e desenvolvimento em robótica.
-
----
-
-## 🤝 Contribuição
-
-Contribuições são bem-vindas!
-Abra uma issue ou envie um pull request.
 
 ---
