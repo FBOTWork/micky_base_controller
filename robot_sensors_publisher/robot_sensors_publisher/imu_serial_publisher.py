@@ -1,8 +1,9 @@
 import rclpy
 from rclpy.node import Node
 
-from std_msgs.msg import Float32
-from std_msgs.msg import Bool
+from sensor_msgs.msg import Imu
+from geometry_msgs.msg import TransformStamped
+from tf2_ros import TransformBroadcaster
 
 import serial
 import time
@@ -10,58 +11,24 @@ import math
 import os
 import glob
 
-from geometry_msgs.msg import TransformStamped
-from tf2_ros import TransformBroadcaster
-
 
 class ImuSerialPublisher(Node):
 
     def __init__(self):
-
-        super().__init__('imu_serial_publisher')
+        super().__init__("imu_serial_publisher")
 
         # =========================
         # PARAMETROS
         # =========================
+        self.declare_parameter("port", "/dev/arduino_robo")
+        self.declare_parameter("baudrate", 115200)
 
-        self.declare_parameter('port', '/dev/arduino_robo')
-        self.declare_parameter('baudrate', 115200)
-
-        port = self.get_parameter('port').value
-        baudrate = self.get_parameter('baudrate').value
-
-        # =========================
-        # TF BROADCASTER
-        # =========================
-
-        self.tf_broadcaster = TransformBroadcaster(self)
-
-        # =========================
-        # TOPICOS IMU
-        # =========================
-
-        self.pub_front_roll = self.create_publisher(Float32, '/imu/front/roll', 10)
-        self.pub_front_pitch = self.create_publisher(Float32, '/imu/front/pitch', 10)
-
-        self.pub_back_roll = self.create_publisher(Float32, '/imu/back/roll', 10)
-        self.pub_back_pitch = self.create_publisher(Float32, '/imu/back/pitch', 10)
-
-        # =========================
-        # TOPICO BOTAO ESTOP
-        # =========================
-
-        self.pub_estop = self.create_publisher(Bool, '/robot/estop', 10)
-
-        # =========================
-        # ESTADO DO MOTOR
-        # =========================
-
-        self.pub_motor = self.create_publisher(Bool, '/robot/estado_motor', 10)
+        port = self.get_parameter("port").value
+        baudrate = self.get_parameter("baudrate").value
 
         # =========================
         # SERIAL
         # =========================
-
         self.serial_port = self.find_serial_port(port)
         self.serial_conn = self.open_serial(self.serial_port, baudrate)
 
@@ -69,60 +36,48 @@ class ImuSerialPublisher(Node):
         self.serial_conn.setRTS(False)
 
         time.sleep(2)
-
         self.serial_conn.reset_input_buffer()
 
         self.get_logger().info(f"Serial conectada em {self.serial_port}")
 
+        # =========================
+        # PUBLICADORES
+        # =========================
+        self.pub_imu = self.create_publisher(Imu, "/imu/data", 10)
+
+        self.tf_broadcaster = TransformBroadcaster(self)
+
         # Timer 100Hz
         self.timer = self.create_timer(0.01, self.read_and_publish)
 
+    # =========================
+    # SERIAL HELPERS
+    # =========================
     def find_serial_port(self, port):
-        """Retorna porta serial válida ou aguarda Arduino conectar."""
         if port and os.path.exists(port):
-            self.get_logger().info(f"Porta especificada existe: {port}")
             return port
 
-        self.get_logger().info(f"Porta {port} não encontrada. Procurando dispositivos USB...")
-
         while rclpy.ok():
-            candidates = sorted(glob.glob('/dev/ttyACM*') + glob.glob('/dev/ttyUSB*'))
-
-            if candidates:
-                selected = candidates[0]
-                self.get_logger().info(f"Encontrado dispositivo serial: {selected}")
-                return selected
-
-            self.get_logger().info("Nenhum dispositivo serial encontrado. Conecte o Arduino e aguarde...")
+            devices = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+            if devices:
+                return devices[0]
             time.sleep(1)
-
-        raise SystemExit
 
     def open_serial(self, port, baudrate):
         while rclpy.ok():
             try:
-                ser = serial.Serial(port, baudrate, timeout=0.1)
-                return ser
-            except serial.SerialException as e:
-                self.get_logger().error(f"Erro abrindo porta {port}: {e}")
-                self.get_logger().info("Tentando detectar novamente a porta...")
+                return serial.Serial(port, baudrate, timeout=0.1)
+            except:
                 time.sleep(1)
-                port = self.find_serial_port(port)
-
-        raise SystemExit
 
     # =========================
-    # CONVERTE EULER -> QUATERNION
+    # EULER → QUATERNION
     # =========================
-
     def euler_to_quaternion(self, roll, pitch, yaw):
-
         cy = math.cos(yaw * 0.5)
         sy = math.sin(yaw * 0.5)
-
         cp = math.cos(pitch * 0.5)
         sp = math.sin(pitch * 0.5)
-
         cr = math.cos(roll * 0.5)
         sr = math.sin(roll * 0.5)
 
@@ -134,143 +89,103 @@ class ImuSerialPublisher(Node):
         return qx, qy, qz, qw
 
     # =========================
-    # PUBLICA TF
+    # LOOP
     # =========================
-
-    def publish_tf(self, frame_name, roll, pitch):
-
-        t = TransformStamped()
-
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = "wx200/base_link"
-        t.child_frame_id = frame_name
-
-        if frame_name == "imu_front":
-
-            t.transform.translation.x = 0.5
-            t.transform.translation.y = 0.0
-            t.transform.translation.z = 0.0
-
-        else:
-
-            t.transform.translation.x = 0.0
-            t.transform.translation.y = 0.0
-            t.transform.translation.z = 0.0
-
-        roll = math.radians(roll)
-        pitch = math.radians(pitch)
-
-        qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, 0.0)
-
-        t.transform.rotation.x = qx
-        t.transform.rotation.y = qy
-        t.transform.rotation.z = qz
-        t.transform.rotation.w = qw
-
-        self.tf_broadcaster.sendTransform(t)
-
-    # =========================
-    # LE SERIAL E PUBLICA
-    # =========================
-
     def read_and_publish(self):
 
         if self.serial_conn.in_waiting > 0:
 
-            raw = self.serial_conn.read_until(b';')
+            raw = self.serial_conn.read_until(b";")
+            line = raw.decode("utf-8", errors="ignore").strip().replace(";", "")
 
-            line = raw.decode('utf-8', errors='ignore').strip().replace(';', '')
+            if not line:
+                return
 
-            if line:
+            parts = line.split(",")
 
-                parts = line.split(',')
+            # NOVO FORMATO → 12 VALORES
+            if len(parts) == 12:
+                try:
+                    roll = float(parts[0])
+                    pitch = float(parts[1])
+                    yaw = float(parts[2])
 
-                if len(parts) == 20:
+                    ax = float(parts[3])
+                    ay = float(parts[4])
+                    az = float(parts[5])
 
-                    try:
+                    gx = float(parts[6])
+                    gy = float(parts[7])
+                    gz = float(parts[8])
 
-                        # IMU FRONT
-                        roll1 = float(parts[0])
-                        pitch1 = float(parts[1])
+                    mx = float(parts[9])
+                    my = float(parts[10])
+                    mz = float(parts[11])
 
-                        # IMU BACK
-                        roll2 = float(parts[9])
-                        pitch2 = float(parts[10])
+                    # CONVERTER PRA RAD
+                    roll = math.radians(roll)
+                    pitch = math.radians(pitch)
+                    yaw = math.radians(yaw)
 
-                        # BOTAO
-                        botao = int(parts[18])
+                    # =========================
+                    # IMU MESSAGE
+                    # =========================
+                    imu_msg = Imu()
+                    imu_msg.header.stamp = self.get_clock().now().to_msg()
+                    imu_msg.header.frame_id = "base_link"
 
-                        # MOTOR
-                        motor = int(parts[19])
+                    qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, yaw)
 
-                        msg = Float32()
+                    imu_msg.orientation.x = qx
+                    imu_msg.orientation.y = qy
+                    imu_msg.orientation.z = qz
+                    imu_msg.orientation.w = qw
 
-                        msg.data = roll1
-                        self.pub_front_roll.publish(msg)
+                    imu_msg.angular_velocity.x = gx
+                    imu_msg.angular_velocity.y = gy
+                    imu_msg.angular_velocity.z = gz
 
-                        msg.data = pitch1
-                        self.pub_front_pitch.publish(msg)
+                    imu_msg.linear_acceleration.x = ax
+                    imu_msg.linear_acceleration.y = ay
+                    imu_msg.linear_acceleration.z = az
 
-                        msg.data = roll2
-                        self.pub_back_roll.publish(msg)
+                    self.pub_imu.publish(imu_msg)
 
-                        msg.data = pitch2
-                        self.pub_back_pitch.publish(msg)
+                    # =========================
+                    # TF
+                    # =========================
+                    t = TransformStamped()
+                    t.header.stamp = imu_msg.header.stamp
+                    t.header.frame_id = "base_link"
+                    t.child_frame_id = "imu_link"
 
-                        # PUBLICA TF
+                    t.transform.rotation.x = qx
+                    t.transform.rotation.y = qy
+                    t.transform.rotation.z = qz
+                    t.transform.rotation.w = qw
 
-                        self.publish_tf("imu_front", roll1, pitch1)
-                        self.publish_tf("imu_back", roll2, pitch2)
+                    self.tf_broadcaster.sendTransform(t)
 
-                        # PUBLICA ESTOP
-
-                        estop_msg = Bool()
-
-                        if botao == 1:
-                            estop_msg.data = True #aqui o
-                        else:
-                            estop_msg.data = False
-
-                        self.pub_estop.publish(estop_msg)
-
-                        # PUBLICA ESTADO DO MOTOR
-
-                        motor_msg = Bool()
-
-                        if motor == 1:
-                            motor_msg.data = True
-                        else:
-                            motor_msg.data = False
-
-                        self.pub_motor.publish(motor_msg)
-
-                    except ValueError:
-                        pass
+                except ValueError:
+                    pass
 
 
 def main(args=None):
-
     rclpy.init(args=args)
 
     node = ImuSerialPublisher()
 
     try:
-
         rclpy.spin(node)
-
     except KeyboardInterrupt:
-
         pass
-
     finally:
-
         if node.serial_conn.is_open:
             node.serial_conn.close()
 
         node.destroy_node()
-
         rclpy.shutdown()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
