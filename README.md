@@ -1,4 +1,3 @@
-<<<<<<< 3-add-readme-for-usb-rules-use-and-general
 # Micky_Base_Controller
 
 ## Tutorial de Configuração e Uso
