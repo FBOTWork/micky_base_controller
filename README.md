@@ -1,80 +1,80 @@
 # 🤖 Micky Base Controller
 
-## 📘 Tutorial de Configuração e Uso
+## 📘 Setup and Usage Tutorial
 
-Este repositório contém o controle base do robô Micky, incluindo firmware e nós ROS 2 para controle de motores e publicação de sensores.
-
----
-
-## 🧠 Visão geral
-
-* **ROS2** → controle e tomada de decisão
-* **Arduino Mega** → execução (motores)
-
-O Arduino roda o `firmware.ino`, responsável por interpretar comandos recebidos e controlar o robô.
+This repository contains the base control for the Micky robot, including firmware and ROS 2 nodes for motor control and sensor publishing.
 
 ---
 
-## 📦 Estrutura do repositório
+## 🧠 Overview
+
+* **ROS2** → control and decision making
+* **Arduino Mega** → execution (motors)
+
+The Arduino runs the `firmware.ino`, responsible for interpreting received commands and controlling the robot.
+
+---
+
+## 📦 Repository Structure
 
 ```bash
 micky_base_controller/
-│── firmware_micro_controller/   # Firmware do Arduino
-│── motors_controller/           # Controle dos motores (ROS2)
-│── robot_sensors_publisher/     # Publicação de sensores (ROS2)
+│── firmware_micro_controller/   # Arduino Firmware
+│── motors_controller/           # Motor Control (ROS2)
+│── robot_sensors_publisher/     # Sensor Publishing (ROS2)
 │── README.md
 ```
 
 ---
 
-## 🚀 Funcionalidades
+## 🚀 Features
 
-* Controle de robô diferencial
-* Integração com ROS2
-* Controle via tópico `/cmd_vel`
-* Publicação de dados de sensores (IMU)
-* Arquitetura modular
+* Differential robot control
+* ROS2 integration
+* Control via `/cmd_vel` topic
+* Sensor data publishing (IMU)
+* Modular architecture
 
 ---
 
-## 🛠️ Requisitos
+## 🛠️ Requirements
 
 * Linux (Ubuntu)
 * ROS 2 (Humble)
-* Arduino IDE ou PlatformIO
-* Dependências Python (`setup.py`)
+* Arduino IDE or PlatformIO
+* Python dependencies (`setup.py`)
 
 ---
 
-## ⚙️ 1. Instalar Arduino IDE
+## ⚙️ 1. Install Arduino IDE
 
-1. Acesse: https://www.arduino.cc/en/software
-2. Baixe e instale normalmente
+1. Access: https://www.arduino.cc/en/software
+2. Download and install normally
 
 ---
 
-## ⚙️ 2. Upload do firmware
+## ⚙️ 2. Firmware Upload
 
-1. Abra:
+1. Open:
 
 ```bash
 firmware_micro_controller/firmware.ino
 ```
 
-2. Conecte o Arduino
+2. Connect the Arduino
 
-3. Configure na IDE:
+3. Configure in IDE:
 
-* Placa: **Arduino Mega 2560**
-* Porta: `/dev/ttyACM0` ou `/dev/ttyUSB0`
+* Board: **Arduino Mega 2560**
+* Port: `/dev/ttyACM0` or `/dev/ttyUSB0`
 
-4. Clique em **Upload**
+4. Click **Upload**
 
 ---
 
-## ⚙️ 3. Configurar porta USB (udev)
+## ⚙️ 3. Configure USB Port (udev)
 
-### 🔹 Descobrir dispositivo
+### 🔹 Discover Device
 
 ```bash
 ls /dev/tty*
@@ -82,7 +82,7 @@ ls /dev/tty*
 
 ---
 
-### 🔹 Obter informações
+### 🔹 Get Information
 
 ```bash
 udevadm info -a -n /dev/ttyACM0 | grep -E 'idVendor|idProduct|serial'
@@ -90,13 +90,13 @@ udevadm info -a -n /dev/ttyACM0 | grep -E 'idVendor|idProduct|serial'
 
 ---
 
-### 🔹 Criar regra udev
+### 🔹 Create udev Rule
 
 ```bash
 sudo nano /etc/udev/rules.d/99-arduino_robo.rules
 ```
 
-Adicione:
+Add:
 
 ```bash
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", MODE="0666", SYMLINK+="arduino_robo"
@@ -104,7 +104,7 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", MODE="0666"
 
 ---
 
-### 🔹 Recarregar regras
+### 🔹 Reload Rules
 
 ```bash
 sudo udevadm control --reload-rules
@@ -113,7 +113,7 @@ sudo udevadm trigger
 
 ---
 
-### 🔹 Testar
+### 🔹 Test
 
 ```bash
 ls /dev/arduino_robo
@@ -121,17 +121,17 @@ ls /dev/arduino_robo
 
 ---
 
-### 🔹 Permissão (recomendado)
+### 🔹 Permission (recommended)
 
 ```bash
 sudo usermod -aG dialout $USER
 ```
 
-(Reinicie ou faça logout/login)
+(Restart or logout/login)
 
 ---
 
-### 🔹 Dicas
+### 🔹 Tips
 
 * CH340:
 
@@ -147,7 +147,7 @@ idVendor=10c4 idProduct=ea60
 
 ---
 
-## ⚙️ 4. Build do ROS 2
+## ⚙️ 4. ROS 2 Build
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -157,15 +157,15 @@ source install/setup.bash
 
 ---
 
-## ⚙️ 5. Executar o sistema
+## ⚙️ 5. Run the System
 
-### 🔸 Motores
+### 🔸 Motors
 
 ```bash
 ros2 launch motors_controller motors_controller.launch.py
 ```
 
-### 🔸 Sensores (IMU)
+### 🔸 Sensors (IMU)
 
 ```bash
 ros2 launch robot_sensors_publisher imu_sensor_publisher.launch.py
@@ -173,33 +173,33 @@ ros2 launch robot_sensors_publisher imu_sensor_publisher.launch.py
 
 ---
 
-## ⚙️ 6. Controle manual (Teleop)
+## ⚙️ 6. Manual Control (Teleop)
 
-Instale:
+Install:
 
 ```bash
 sudo apt install ros-humble-teleop-twist-keyboard
 ```
 
-Execute:
+Run:
 
 ```bash
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
-Controles:
+Controls:
 
 ```
-i → frente
-, → ré
-j → esquerda
-l → direita
-k → parar
+i → forward
+, → reverse
+j → left
+l → right
+k → stop
 ```
 
 ---
 
-## ⚙️ 7. Teste rápido
+## ⚙️ 7. Quick Test
 
 ```bash
 ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}, angular: {z: 0.1}}" --once
@@ -207,7 +207,7 @@ ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}, angular: {z:
 
 ---
 
-## ⚙️ 8. Verificar dados
+## ⚙️ 8. Check Data
 
 ```bash
 ros2 topic echo /imu/data
@@ -218,18 +218,18 @@ ros2 topic echo /wheel_encoders
 
 ## ⚡ Firmware (`firmware.ino`)
 
-Responsável por:
+Responsible for:
 
-* Receber comandos
-* Interpretar velocidade linear e angular
-* Controlar motores com PWM
+* Receiving commands
+* Interpreting linear and angular velocity
+* Controlling motors with PWM
 
 ---
 
-## 🎮 Controle do robô
+## 🎮 Robot Control
 
-* Frente / Ré → velocidade linear
-* Giro → velocidade angular
-* Curvas → combinação dos dois
+* Forward / Reverse → linear velocity
+* Turn → angular velocity
+* Curves → combination of both
 
 ---
