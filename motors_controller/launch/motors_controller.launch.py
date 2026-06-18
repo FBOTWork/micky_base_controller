@@ -35,8 +35,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        DeclareLaunchArgument('use_rviz', default_value='false', description='Ativa RViz (true/false)'),
-        DeclareLaunchArgument('rviz_config', default_value='', description='Caminho para o arquivo de configuração do RViz'),
+        DeclareLaunchArgument('use_rviz', default_value='false', description='Activate RViz'),
+        DeclareLaunchArgument('rviz_config', default_value='', description='Path to the RViz configuration file'),
         cmd_vel_node,
         rviz_node
     ])
