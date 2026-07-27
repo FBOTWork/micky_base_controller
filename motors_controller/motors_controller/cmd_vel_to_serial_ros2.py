@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
@@ -10,85 +9,85 @@ import glob
 import time
 
 
-class CmdVelToSerial(Node):
+class CmdVelConverter(Node):
     def __init__(self):
-        super().__init__("cmd_vel_to_serial_node")
+        super().__init__("cmd_vel_converter_node")
 
-        # Parâmetros de conexão
+        self.YAW_DRIFT_COMP = 0.05   # fração de Vy somada a W para corrigir deriva no strafe
+        self.CMD_TIMEOUT_S = 0.3     # tempo sem /cmd_vel até mandar parada de segurança
+        self.last_cmd_time = self.get_clock().now()
+        self.stop_sent = True        # evita reenviar "0,0,0" repetidamente
+
         self.declare_parameter("port", "/dev/arduino_robo")
         self.declare_parameter("baud", 115200)
-
         port = self.get_parameter("port").get_parameter_value().string_value
         baud = self.get_parameter("baud").get_parameter_value().integer_value
 
         self.serial_port = self.find_serial_port(port)
         self.arduino = self.open_serial(self.serial_port, baud)
+        self.get_logger().info(f"Conectado ao Arduino na porta {self.serial_port} a {baud} bps")
 
-        self.get_logger().info(
-            f"Conectado ao Arduino na porta {self.serial_port} a {baud} bps"
-        )
-
-        # Inscrição no tópico cmd_vel (padrão do ROS 2)
-        self.subscription = self.create_subscription(
-            Twist, "/cmd_vel", self.cmd_vel_callback, 10
-        )  # QoS History Depth
+        self.subscription = self.create_subscription(Twist, "/cmd_vel", self.cmd_vel_callback, 10)
+        self.watchdog_timer = self.create_timer(0.1, self.watchdog_check)  # checa silêncio 10x mais rápido que o timeout
 
     def find_serial_port(self, preferred_port):
+        # usa a porta fixa se existir; senão, procura qualquer ACM/USB disponível
         if preferred_port and os.path.exists(preferred_port):
-            self.get_logger().info(f"Porta especificada existe: {preferred_port}")
             return preferred_port
-
-        self.get_logger().info(
-            f"Porta {preferred_port} não encontrada. Procurando /dev/ttyACM* e /dev/ttyUSB*..."
-        )
         while rclpy.ok():
             candidates = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
             if candidates:
-                selected = candidates[0]
-                self.get_logger().info(f"Encontrado dispositivo serial: {selected}")
-                return selected
-            self.get_logger().info(
-                "Nenhum dispositivo serial encontrado. Conecte o Arduino e aguarde..."
-            )
+                return candidates[0]
             time.sleep(1)
-
         raise SystemExit
 
     def open_serial(self, port, baud):
+        # tenta reconectar indefinidamente caso o Arduino não esteja pronto ainda
         while rclpy.ok():
             try:
-                ser = serial.Serial(port, baud, timeout=0.1)
-                return ser
-            except Exception as e:
-                self.get_logger().error(f"Erro abrindo porta {port}: {e}")
-                self.get_logger().info("Tentando detectar novamente a porta...")
+                return serial.Serial(port, baud, timeout=0.1)
+            except Exception:
                 time.sleep(1)
                 port = self.find_serial_port(port)
-
         raise SystemExit
 
-    def cmd_vel_callback(self, msg):
-        vx = msg.linear.x
-        vy = msg.linear.y
-        vw = msg.angular.z
-
-        # Formata a string idêntica ao que o Arduino Mega espera
-        comando = f"<{vx:.3f},{vy:.3f},{vw:.3f}>\n"
-
+    def send_serial(self, vx, vy, vw):
+        # protocolo esperado pelo firmware: "Vx,Vy,W\n" — cinemática fica no Arduino
+        comando = f"{vx:.2f},{vy:.2f},{vw:.2f}\n"
         try:
             self.arduino.write(comando.encode("utf-8"))
         except Exception as e:
-            self.get_logger().warn(f"Erro ao enviar para Serial: {e}")
+            self.get_logger().warn(f"Erro na Serial: {e}")
+
+    def cmd_vel_callback(self, msg):
+        self.last_cmd_time = self.get_clock().now()
+
+        vx = msg.linear.x
+        vy = -msg.linear.y    # eixo Y do ROS invertido pra bater com o strafe físico do robô
+        vw = -msg.angular.z   # yaw do ROS invertido pra bater com o giro físico do robô
+        vw_effective = vw + (vy * self.YAW_DRIFT_COMP)  # injeta a correção de deriva no giro
+
+        self.stop_sent = (vx == 0.0 and vy == 0.0 and vw_effective == 0.0)
+        self.send_serial(vx, vy, vw_effective)
+
+    def watchdog_check(self):
+        elapsed = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
+        if elapsed > self.CMD_TIMEOUT_S and not self.stop_sent:
+            # /cmd_vel parou de chegar (ex: teleop_twist_keyboard só publica no keypress) — força parada
+            self.get_logger().warn("Sem /cmd_vel há muito tempo — enviando parada de segurança")
+            self.send_serial(0.0, 0.0, 0.0)
+            self.stop_sent = True
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = CmdVelToSerial()
+    node = CmdVelConverter()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
+        node.send_serial(0.0, 0.0, 0.0)  # garante parada mesmo em Ctrl+C
         node.destroy_node()
         rclpy.shutdown()
 
