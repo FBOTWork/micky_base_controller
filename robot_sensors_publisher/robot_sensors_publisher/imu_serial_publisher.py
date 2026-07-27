@@ -30,15 +30,23 @@ class ImuSerialPublisher(Node):
         # SERIAL
         # =========================
         self.serial_port = self.find_serial_port(port)
-        self.serial_conn = self.open_serial(self.serial_port, baudrate)
+        self.serial_conn = None
 
-        self.serial_conn.setDTR(False)
-        self.serial_conn.setRTS(False)
+        if self.serial_port:
+            self.serial_conn = self.open_serial(self.serial_port, baudrate)
 
-        time.sleep(2)
-        self.serial_conn.reset_input_buffer()
+        if self.serial_conn is not None:
+            self.serial_conn.setDTR(False)
+            self.serial_conn.setRTS(False)
 
-        self.get_logger().info(f"Serial conectada em {self.serial_port}")
+            time.sleep(2)
+            self.serial_conn.reset_input_buffer()
+
+            self.get_logger().info(f"Serial conectada em {self.serial_port}")
+        else:
+            self.get_logger().error(
+                "Não foi possível abrir a porta serial. O tópico não será publicado até que o dispositivo esteja disponível."
+            )
 
         # =========================
         # PUBLICADORES
@@ -57,18 +65,29 @@ class ImuSerialPublisher(Node):
         if port and os.path.exists(port):
             return port
 
-        while rclpy.ok():
-            devices = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
-            if devices:
-                return devices[0]
-            time.sleep(1)
+        devices = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+        if devices:
+            return devices[0]
+
+        self.get_logger().warn(
+            "Nenhuma porta serial compatível foi encontrada em /dev/ttyACM* ou /dev/ttyUSB*."
+        )
+        return None
 
     def open_serial(self, port, baudrate):
-        while rclpy.ok():
+        baudrates = [baudrate] + [rate for rate in (115200, 57600, 9600, 38400, 230400) if rate != baudrate]
+
+        for rate in baudrates:
             try:
-                return serial.Serial(port, baudrate, timeout=0.1)
-            except:
-                time.sleep(1)
+                conn = serial.Serial(port, rate, timeout=0.1)
+                self.get_logger().info(f"Porta serial aberta em {port} com baudrate {rate}")
+                return conn
+            except serial.SerialException as exc:
+                self.get_logger().warning(f"Falha ao abrir {port} com baudrate {rate}: {exc}")
+            except Exception as exc:
+                self.get_logger().warning(f"Erro inesperado ao abrir {port}: {exc}")
+
+        return None
 
     # =========================
     # EULER → QUATERNION
@@ -92,10 +111,14 @@ class ImuSerialPublisher(Node):
     # LOOP
     # =========================
     def read_and_publish(self):
+        if self.serial_conn is None:
+            return
 
-        if self.serial_conn.in_waiting > 0:
+        try:
+            if self.serial_conn.in_waiting <= 0:
+                return
 
-            raw = self.serial_conn.read_until(b";")
+            raw = self.serial_conn.readline()
             line = raw.decode("utf-8", errors="ignore").strip().replace(";", "")
 
             if not line:
@@ -103,71 +126,78 @@ class ImuSerialPublisher(Node):
 
             parts = line.split(",")
 
-            # NOVO FORMATO → 12 VALORES
-            if len(parts) == 12:
-                try:
-                    roll = float(parts[0])
-                    pitch = float(parts[1])
-                    yaw = float(parts[2])
+            # Aceita mensagens com pelo menos 12 valores e ignora campos extras.
+            if len(parts) < 12:
+                self.get_logger().warning(f"Formato inesperado recebido na serial: {line}")
+                return
 
-                    ax = float(parts[3])
-                    ay = float(parts[4])
-                    az = float(parts[5])
+            values = parts[:12]
 
-                    gx = float(parts[6])
-                    gy = float(parts[7])
-                    gz = float(parts[8])
+            try:
+                roll = float(values[0])
+                pitch = float(values[1])
+                yaw = float(values[2])
 
-                    mx = float(parts[9])
-                    my = float(parts[10])
-                    mz = float(parts[11])
+                ax = float(values[3])
+                ay = float(values[4])
+                az = float(values[5])
 
-                    # CONVERTER PRA RAD
-                    roll = math.radians(roll)
-                    pitch = math.radians(pitch)
-                    yaw = math.radians(yaw)
+                gx = float(values[6])
+                gy = float(values[7])
+                gz = float(values[8])
 
-                    # =========================
-                    # IMU MESSAGE
-                    # =========================
-                    imu_msg = Imu()
-                    imu_msg.header.stamp = self.get_clock().now().to_msg()
-                    imu_msg.header.frame_id = "base_link"
+                mx = float(values[9])
+                my = float(values[10])
+                mz = float(values[11])
 
-                    qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, yaw)
+                # CONVERTER PRA RAD
+                roll = math.radians(roll)
+                pitch = math.radians(pitch)
+                yaw = math.radians(yaw)
 
-                    imu_msg.orientation.x = qx
-                    imu_msg.orientation.y = qy
-                    imu_msg.orientation.z = qz
-                    imu_msg.orientation.w = qw
+                # =========================
+                # IMU MESSAGE
+                # =========================
+                imu_msg = Imu()
+                imu_msg.header.stamp = self.get_clock().now().to_msg()
+                imu_msg.header.frame_id = "base_link"
 
-                    imu_msg.angular_velocity.x = gx
-                    imu_msg.angular_velocity.y = gy
-                    imu_msg.angular_velocity.z = gz
+                qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, yaw)
 
-                    imu_msg.linear_acceleration.x = ax
-                    imu_msg.linear_acceleration.y = ay
-                    imu_msg.linear_acceleration.z = az
+                imu_msg.orientation.x = qx
+                imu_msg.orientation.y = qy
+                imu_msg.orientation.z = qz
+                imu_msg.orientation.w = qw
 
-                    self.pub_imu.publish(imu_msg)
+                imu_msg.angular_velocity.x = gx
+                imu_msg.angular_velocity.y = gy
+                imu_msg.angular_velocity.z = gz
 
-                    # =========================
-                    # TF
-                    # =========================
-                    t = TransformStamped()
-                    t.header.stamp = imu_msg.header.stamp
-                    t.header.frame_id = "base_link"
-                    t.child_frame_id = "imu_link"
+                imu_msg.linear_acceleration.x = ax
+                imu_msg.linear_acceleration.y = ay
+                imu_msg.linear_acceleration.z = az
 
-                    t.transform.rotation.x = qx
-                    t.transform.rotation.y = qy
-                    t.transform.rotation.z = qz
-                    t.transform.rotation.w = qw
+                self.pub_imu.publish(imu_msg)
 
-                    self.tf_broadcaster.sendTransform(t)
+                # =========================
+                # TF
+                # =========================
+                t = TransformStamped()
+                t.header.stamp = imu_msg.header.stamp
+                t.header.frame_id = "base_link"
+                t.child_frame_id = "imu_link"
 
-                except ValueError:
-                    pass
+                t.transform.rotation.x = qx
+                t.transform.rotation.y = qy
+                t.transform.rotation.z = qz
+                t.transform.rotation.w = qw
+
+                self.tf_broadcaster.sendTransform(t)
+
+            except ValueError as exc:
+                self.get_logger().warning(f"Erro ao converter os valores recebidos: {line} ({exc})")
+        except serial.SerialException as exc:
+            self.get_logger().warning(f"Erro de leitura na serial: {exc}")
 
 
 def main(args=None):
@@ -180,7 +210,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        if node.serial_conn.is_open:
+        if getattr(node, "serial_conn", None) is not None and node.serial_conn.is_open:
             node.serial_conn.close()
 
         node.destroy_node()
