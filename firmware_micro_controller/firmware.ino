@@ -22,8 +22,18 @@ const float L = 0.38;
 const float velocidadeMax = 4000.0;
 const float aceleracao = 700.0;
 
+// timeout de seguranca no proprio firmware: se a serial degradar (ex: ruido,
+// desconexao) e nenhum comando valido novo chegar, para sozinho em vez de
+// continuar executando o ultimo move() para sempre
+const unsigned long SERIAL_TIMEOUT_MS = 200;
+unsigned long ultimoComandoValido = 0;
+bool roboParado = true;
+
+char bufferSerial[32];
+
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(100);
   Serial.println("Base Mecanum Pronta - Aguardando comandos do Python...");
 
   // Polaridade final: padrão simétrico esquerda/direita (confirmado por teste individual)
@@ -70,21 +80,39 @@ void pararRobo() {
 
 void loop() {
   if (Serial.available() > 0) {
-    String dados = Serial.readStringUntil('\n');
-    int idx1 = dados.indexOf(',');
-    int idx2 = dados.indexOf(',', idx1 + 1);
+    // buffer fixo em vez de String: evita fragmentacao de heap no loop, que
+    // com uptime longo degradava o parsing e travava o robo na ultima
+    // velocidade recebida (String aloca/realoca memoria dinamicamente)
+    size_t len = Serial.readBytesUntil('\n', bufferSerial, sizeof(bufferSerial) - 1);
+    bufferSerial[len] = '\0';
 
-    if (idx1 > 0 && idx2 > 0) {
-      float Vx = dados.substring(0, idx1).toFloat();
-      float Vy = dados.substring(idx1 + 1, idx2).toFloat();
-      float W = dados.substring(idx2 + 1).toFloat();
+    // strtok+atof em vez de sscanf("%f"): a avr-libc padrao do Arduino Mega/Uno
+    // nao suporta ponto flutuante no scanf (falharia silenciosamente)
+    char* tokVx = strtok(bufferSerial, ",");
+    char* tokVy = tokVx ? strtok(NULL, ",") : NULL;
+    char* tokW  = tokVy ? strtok(NULL, ",") : NULL;
+
+    if (tokVx && tokVy && tokW) {
+      float Vx = atof(tokVx);
+      float Vy = atof(tokVy);
+      float W  = atof(tokW);
+      ultimoComandoValido = millis();
 
       if (Vx == 0.0 && Vy == 0.0 && W == 0.0) {
         pararRobo();
+        roboParado = true;
       } else {
         moverRoboContinuo(Vx, Vy, W);
+        roboParado = false;
       }
     }
+  }
+
+  // parada de seguranca: se a serial parar de entregar comandos validos
+  // (desconexao, ruido, etc.), nao fica executando o ultimo move() pra sempre
+  if (!roboParado && (millis() - ultimoComandoValido > SERIAL_TIMEOUT_MS)) {
+    pararRobo();
+    roboParado = true;
   }
 
   motorFR.run();
