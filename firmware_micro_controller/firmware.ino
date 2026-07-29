@@ -20,7 +20,17 @@ AccelStepper motorRL(1, PUL_RL, DIR_RL);
 
 const float L = 0.38;
 const float velocidadeMax = 4000.0;
-const float aceleracao = 700.0;
+const float aceleracao = 3000.0;        // rampa suave ao ganhar velocidade (evita ruido/engasgo)
+const float aceleracaoParada = 3000.0; // rampa rapida ao parar/inverter sentido (evita lag ao trocar de comando)
+
+// sentido atual de cada roda (-1, 0 ou +1): usado pra saber se um comando novo
+// esta invertendo o sentido de giro, caso em que precisa desacelerar rapido
+int sinalFL = 0, sinalFR = 0, sinalRL = 0, sinalRR = 0;
+
+// driver TB6600: SW1=OFF, SW2=ON, SW3=OFF -> 1/8 microstep, motor 1.8 grau (200 steps/volta)
+const float RAIO_RODA = 0.045; // metros
+const long PULSOS_POR_REV = 1600;
+const float STEPS_POR_METRO = PULSOS_POR_REV / (2.0 * PI * RAIO_RODA);
 
 // timeout de seguranca no proprio firmware: se a serial degradar (ex: ruido,
 // desconexao) e nenhum comando valido novo chegar, para sozinho em vez de
@@ -30,6 +40,19 @@ unsigned long ultimoComandoValido = 0;
 bool roboParado = true;
 
 char bufferSerial[32];
+
+// ultimo comando efetivamente aplicado aos motores: usado pra nao reemitir
+// setMaxSpeed()/move() quando o /cmd_vel novo repete o mesmo valor
+float ultimoVx = 0.0;
+float ultimoVy = 0.0;
+float ultimoW = 0.0;
+const float EPSILON_VEL = 0.001;
+
+bool comandoMudou(float Vx, float Vy, float W) {
+  return abs(Vx - ultimoVx) > EPSILON_VEL ||
+         abs(Vy - ultimoVy) > EPSILON_VEL ||
+         abs(W - ultimoW) > EPSILON_VEL;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -50,32 +73,53 @@ void setup() {
   }
 }
 
+void aplicarMovimento(AccelStepper &motor, int &sinalAtual, float prop) {
+  int sinalNovo = (prop >= 0) ? 1 : -1;
+
+  // se ja estava girando e o sentido inverteu, desacelera rapido em vez de
+  // usar a mesma rampa suave da partida - senao o tempo de resposta fica
+  // proporcional a velocidade atual (quanto mais tempo segurou o comando
+  // anterior, mais demora pra atender o proximo)
+  bool invertendo = (sinalAtual != 0) && (sinalNovo != sinalAtual);
+  motor.setAcceleration(invertendo ? aceleracaoParada : aceleracao);
+
+  float vel = constrain(abs(prop) * STEPS_POR_METRO, 0.0, velocidadeMax);
+  motor.setMaxSpeed(vel);
+  motor.move(1000000L * sinalNovo);
+  sinalAtual = sinalNovo;
+}
+
 void moverRoboContinuo(float Vx, float Vy, float W) {
+  // propX ja e a velocidade de superficie de cada roda em m/s (cinematica
+  // mecanum). Antes isso so era normalizado pela maior roda, fazendo a
+  // dominante sempre bater em velocidadeMax (cheio) e ignorando a magnitude
+  // real pedida pelo /cmd_vel - por isso o robo sempre "corria" e fazia
+  // barulho, mesmo em velocidades baixas.
   float propFL = Vx + Vy + (W * L);
   float propFR = Vx - Vy - (W * L);
   float propRL = Vx - Vy + (W * L);
   float propRR = Vx + Vy - (W * L);
 
-  float maxProp = max(max(abs(propFL), abs(propFR)), max(abs(propRL), abs(propRR)));
-  if (maxProp == 0) maxProp = 1.0;
-
-  motorFL.setMaxSpeed(velocidadeMax * (abs(propFL) / maxProp));
-  motorFR.setMaxSpeed(velocidadeMax * (abs(propFR) / maxProp));
-  motorRL.setMaxSpeed(velocidadeMax * (abs(propRL) / maxProp));
-  motorRR.setMaxSpeed(velocidadeMax * (abs(propRR) / maxProp));
-
-  long infinito = 1000000;
-  motorFL.move(infinito * (propFL >= 0 ? 1 : -1));
-  motorFR.move(infinito * (propFR >= 0 ? 1 : -1));
-  motorRL.move(infinito * (propRL >= 0 ? 1 : -1));
-  motorRR.move(infinito * (propRR >= 0 ? 1 : -1));
+  aplicarMovimento(motorFL, sinalFL, propFL);
+  aplicarMovimento(motorFR, sinalFR, propFR);
+  aplicarMovimento(motorRL, sinalRL, propRL);
+  aplicarMovimento(motorRR, sinalRR, propRR);
 }
 
 void pararRobo() {
+  // parar tambem usa a rampa rapida: sempre queremos que a parada seja
+  // pronta, nao a rampa suave de partida
+  motorFL.setAcceleration(aceleracaoParada);
+  motorFR.setAcceleration(aceleracaoParada);
+  motorRL.setAcceleration(aceleracaoParada);
+  motorRR.setAcceleration(aceleracaoParada);
+
   motorFL.stop();
   motorFR.stop();
   motorRL.stop();
   motorRR.stop();
+
+  sinalFL = sinalFR = sinalRL = sinalRR = 0;
 }
 
 void loop() {
@@ -98,12 +142,21 @@ void loop() {
       float W  = atof(tokW);
       ultimoComandoValido = millis();
 
-      if (Vx == 0.0 && Vy == 0.0 && W == 0.0) {
-        pararRobo();
-        roboParado = true;
-      } else {
-        moverRoboContinuo(Vx, Vy, W);
-        roboParado = false;
+      // so reemite setMaxSpeed()/move() se o comando realmente mudou: chamar
+      // isso de novo a cada pacote (varias vezes por segundo) mesmo com a
+      // mesma velocidade reinicia o perfil de aceleracao do AccelStepper e
+      // causa os engasgos/ruido durante a partida
+      if (comandoMudou(Vx, Vy, W)) {
+        if (Vx == 0.0 && Vy == 0.0 && W == 0.0) {
+          pararRobo();
+          roboParado = true;
+        } else {
+          moverRoboContinuo(Vx, Vy, W);
+          roboParado = false;
+        }
+        ultimoVx = Vx;
+        ultimoVy = Vy;
+        ultimoW = W;
       }
     }
   }
@@ -113,6 +166,7 @@ void loop() {
   if (!roboParado && (millis() - ultimoComandoValido > SERIAL_TIMEOUT_MS)) {
     pararRobo();
     roboParado = true;
+    ultimoVx = ultimoVy = ultimoW = 0.0;
   }
 
   motorFR.run();
