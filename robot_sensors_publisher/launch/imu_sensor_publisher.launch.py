@@ -16,7 +16,7 @@ def generate_launch_description():
         name='imu_serial_publisher',
         output='screen',
         parameters=[
-            {'port': '/dev/arduino_robo'},
+            {'port': '/dev/arduino_imu'},
             {'baudrate': 115200}
         ]
     )

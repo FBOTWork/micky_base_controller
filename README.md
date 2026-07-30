@@ -74,6 +74,19 @@ firmware_micro_controller/firmware.ino
 
 ## ⚙️ 3. Configure USB Port (udev)
 
+The robot has **two** USB-serial devices that must resolve to different,
+stable names: the motors Arduino (`/dev/arduino_robo`) and the IMU
+(`/dev/arduino_imu`).
+
+⚠️ **Both currently use the same CH340 USB-serial chip**
+(`idVendor=1a86`, `idProduct=7523`), and CH340 clones don't expose a
+unique per-device serial number. A rule that matches only on
+`idVendor`/`idProduct` will match **both** devices and they will fight
+over the same symlink name (whichever enumerates last wins, and the
+other is left without a stable name). To tell them apart, the rules
+also match on the **physical USB port** (`KERNELS`), which stays stable
+as long as each cable stays plugged into the same physical port.
+
 ### 🔹 Discover Device
 
 ```bash
@@ -85,22 +98,30 @@ ls /dev/tty*
 ### 🔹 Get Information
 
 ```bash
-udevadm info -a -n /dev/ttyACM0 | grep -E 'idVendor|idProduct|serial'
+udevadm info -a -n /dev/ttyUSB0 | grep -E 'idVendor|idProduct|serial|KERNELS'
 ```
+
+Note the `KERNELS=="X-Y"` value closest to the top of the output (the
+USB device itself, e.g. `KERNELS=="8-1"`) — that identifies the
+physical port this device is plugged into. Repeat for every connected
+`ttyUSB*`/`ttyACM*` device and note which one is the motors Arduino and
+which one is the IMU (e.g. unplug one cable at a time and see which
+device disappears from `ls /dev/ttyUSB*`).
 
 ---
 
-### 🔹 Create udev Rule
+### 🔹 Install the udev Rule
+
+The rules for this robot are versioned in [`udev/99-micky-usb-serial.rules`](udev/99-micky-usb-serial.rules).
+Install it with:
 
 ```bash
-sudo nano /etc/udev/rules.d/99-arduino_robo.rules
+sudo cp udev/99-micky-usb-serial.rules /etc/udev/rules.d/
 ```
 
-Add:
-
-```bash
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", MODE="0666", SYMLINK+="arduino_robo"
-```
+If your motors Arduino / IMU are plugged into different physical ports
+than the ones already in the file, edit the `KERNELS=="..."` values to
+match the ports you found in the previous step.
 
 ---
 
@@ -116,8 +137,10 @@ sudo udevadm trigger
 ### 🔹 Test
 
 ```bash
-ls /dev/arduino_robo
+ls -l /dev/arduino_robo /dev/arduino_imu
 ```
+
+Both should exist and point to different `ttyUSB*`/`ttyACM*` devices.
 
 ---
 
@@ -143,6 +166,12 @@ idVendor=1a86 idProduct=7523
 
 ```bash
 idVendor=10c4 idProduct=ea60
+```
+
+* Genuine Arduino (e.g. Mega 2560):
+
+```bash
+idVendor=2341 idProduct=0043
 ```
 
 ---

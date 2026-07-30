@@ -23,7 +23,8 @@ setup(
 
     entry_points={
         'console_scripts': [
-        'cmd_vel_to_serial = motors_controller.cmd_vel_to_serial_ros2:main'        
+        'cmd_vel_to_serial = motors_controller.cmd_vel_to_serial_ros2:main',
+        'cmd_vel_to_odom = motors_controller.cmd_vel_to_odom_ros2:main',
         ],
     },
 )

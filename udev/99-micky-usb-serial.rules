@@ -1,0 +1,24 @@
+# Regras udev para o robo Micky
+#
+# Arduino do motors_controller e a IMU usam o mesmo chip conversor
+# CH340 (idVendor=1a86, idProduct=7523), entao nao da pra diferencia-los
+# so pelo VID:PID - os dois casariam na mesma regra e disputariam o
+# mesmo nome de symlink. Por isso o match usa tambem a porta fisica
+# USB (KERNELS) em que cada conversor esta ligado.
+#
+# Os dois estao ligados num HUB USB (que por sua vez esta na porta fisica
+# 8-1 do PC) - por isso o KERNELS usado e o sub-endereco da porta do HUB
+# (8-1.X), nao a porta do PC. Isso fica estavel contanto que o cabo
+# continue no mesmo slot fisico do hub; se trocar de slot do hub OU ligar
+# direto no PC (sem hub), o KERNELS muda e a regra correspondente precisa
+# ser atualizada (descubra com: udevadm info -a -n /dev/ttyUSBx | grep KERNELS
+# - use o primeiro KERNELS=="X-Y.Z" da lista, o mais proximo do topo).
+
+# Arduino motors_controller - CH340 - porta 8-1.4 do hub
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", KERNELS=="8-1.4", SYMLINK+="arduino_robo"
+
+# IMU - CH340 - porta 8-1.2 do hub
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", KERNELS=="8-1.2", SYMLINK+="arduino_imu"
+
+# Hokuyo URG-Series (front lidar)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="15d1", ATTRS{idProduct}=="0000", SYMLINK+="hokuyo_front"

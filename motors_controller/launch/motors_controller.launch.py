@@ -25,6 +25,13 @@ def generate_launch_description():
 
     )
 
+    cmd_vel_to_odom_node = Node(
+        package='motors_controller',
+        executable='cmd_vel_to_odom',
+        name='cmd_vel_to_odom_node',
+        output='screen',
+    )
+
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -38,5 +45,6 @@ def generate_launch_description():
         DeclareLaunchArgument('use_rviz', default_value='false', description='Activate RViz'),
         DeclareLaunchArgument('rviz_config', default_value='', description='Path to the RViz configuration file'),
         cmd_vel_node,
+        cmd_vel_to_odom_node,
         rviz_node
     ])

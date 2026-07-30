@@ -2,8 +2,6 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import Imu
-from geometry_msgs.msg import TransformStamped
-from tf2_ros import TransformBroadcaster
 
 import serial
 import time
@@ -14,13 +12,30 @@ import glob
 
 class ImuSerialPublisher(Node):
 
+    # Firmware manda telemetria de DOIS MPU6050 numa linha so:
+    # roll1,pitch1,accX1,accY1,accZ1,gyroX1,gyroY1,gyroZ1,temp1,
+    # roll2,pitch2,accX2,accY2,accZ2,gyroX2,gyroY2,gyroZ2,temp2,botao,motor;
+    # so usamos os 9 primeiros campos (MPU1), que e o que esta fisicamente
+    # alinhado com o chassi - o resto (MPU2/botao/motor) e ignorado aqui.
+    MIN_FIELDS = 9
+
+    # firmware manda giro em graus/s e acel em g; sensor_msgs/Imu exige rad/s e m/s^2
+    DEG_TO_RAD = math.pi / 180.0
+    G_TO_MS2 = 9.80665
+
+    # variancia do giro Z medida em bancada com o robo parado (rad/s)^2 - se
+    # trocar a IMU ou a montagem, remedir com o robo parado e atualizar aqui
+    GYRO_Z_VARIANCE = 3.5e-6
+
+    CALIBRATION_DURATION_S = 2.0
+
     def __init__(self):
         super().__init__("imu_serial_publisher")
 
         # =========================
         # PARAMETROS
         # =========================
-        self.declare_parameter("port", "/dev/arduino_robo")
+        self.declare_parameter("port", "/dev/arduino_imu")
         self.declare_parameter("baudrate", 115200)
 
         port = self.get_parameter("port").value
@@ -35,6 +50,8 @@ class ImuSerialPublisher(Node):
         if self.serial_port:
             self.serial_conn = self.open_serial(self.serial_port, baudrate)
 
+        self.gyro_z_bias_dps = 0.0
+
         if self.serial_conn is not None:
             self.serial_conn.setDTR(False)
             self.serial_conn.setRTS(False)
@@ -43,6 +60,10 @@ class ImuSerialPublisher(Node):
             self.serial_conn.reset_input_buffer()
 
             self.get_logger().info(f"Serial conectada em {self.serial_port}")
+
+            # assume o robo parado nos primeiros segundos pra estimar o bias do
+            # giro Z e descontar ele de toda leitura publicada depois
+            self.gyro_z_bias_dps = self.calibrate_gyro_z(self.serial_conn)
         else:
             self.get_logger().error(
                 "Não foi possível abrir a porta serial. O tópico não será publicado até que o dispositivo esteja disponível."
@@ -52,8 +73,6 @@ class ImuSerialPublisher(Node):
         # PUBLICADORES
         # =========================
         self.pub_imu = self.create_publisher(Imu, "/imu/data", 10)
-
-        self.tf_broadcaster = TransformBroadcaster(self)
 
         # Timer 100Hz
         self.timer = self.create_timer(0.01, self.read_and_publish)
@@ -88,6 +107,38 @@ class ImuSerialPublisher(Node):
                 self.get_logger().warning(f"Erro inesperado ao abrir {port}: {exc}")
 
         return None
+
+    def calibrate_gyro_z(self, conn):
+        self.get_logger().info("Calibrando bias do giro Z - mantenha o robô parado...")
+
+        samples = []
+        deadline = time.time() + self.CALIBRATION_DURATION_S
+
+        while time.time() < deadline:
+            raw = conn.readline()
+            line = raw.decode("utf-8", errors="ignore").strip().replace(";", "")
+
+            if not line:
+                continue
+
+            parts = line.split(",")
+            if len(parts) < self.MIN_FIELDS:
+                continue
+
+            try:
+                samples.append(float(parts[7]))  # gyroZ1
+            except ValueError:
+                continue
+
+        if not samples:
+            self.get_logger().warning(
+                "Calibração do giro Z não recebeu amostras válidas - seguindo sem correção de bias."
+            )
+            return 0.0
+
+        bias = sum(samples) / len(samples)
+        self.get_logger().info(f"Bias do giro Z: {bias:.4f}°/s ({len(samples)} amostras)")
+        return bias
 
     # =========================
     # EULER → QUATERNION
@@ -126,73 +177,52 @@ class ImuSerialPublisher(Node):
 
             parts = line.split(",")
 
-            # Aceita mensagens com pelo menos 12 valores e ignora campos extras.
-            if len(parts) < 12:
+            if len(parts) < self.MIN_FIELDS:
                 self.get_logger().warning(f"Formato inesperado recebido na serial: {line}")
                 return
 
-            values = parts[:12]
-
             try:
-                roll = float(values[0])
-                pitch = float(values[1])
-                yaw = float(values[2])
+                roll_deg, pitch_deg, ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps, _temp1 = (
+                    float(v) for v in parts[: self.MIN_FIELDS]
+                )
 
-                ax = float(values[3])
-                ay = float(values[4])
-                az = float(values[5])
-
-                gx = float(values[6])
-                gy = float(values[7])
-                gz = float(values[8])
-
-                mx = float(values[9])
-                my = float(values[10])
-                mz = float(values[11])
-
-                # CONVERTER PRA RAD
-                roll = math.radians(roll)
-                pitch = math.radians(pitch)
-                yaw = math.radians(yaw)
+                roll = math.radians(roll_deg)
+                pitch = math.radians(pitch_deg)
 
                 # =========================
                 # IMU MESSAGE
                 # =========================
                 imu_msg = Imu()
                 imu_msg.header.stamp = self.get_clock().now().to_msg()
-                imu_msg.header.frame_id = "base_link"
+                imu_msg.header.frame_id = "imu_link"
 
-                qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, yaw)
+                # Sem magnetometro e sem integracao de yaw no firmware (MPU6050 so
+                # tem accel+giro): roll/pitch vem do acelerometro, yaw fica fixo em
+                # 0 aqui. O EKF NAO deve fundir orientacao absoluta desse topico -
+                # so a velocidade angular (vyaw), que e o unico dado real de giro
+                # disponivel.
+                qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, 0.0)
 
                 imu_msg.orientation.x = qx
                 imu_msg.orientation.y = qy
                 imu_msg.orientation.z = qz
                 imu_msg.orientation.w = qw
 
-                imu_msg.angular_velocity.x = gx
-                imu_msg.angular_velocity.y = gy
-                imu_msg.angular_velocity.z = gz
+                imu_msg.angular_velocity.x = gx_dps * self.DEG_TO_RAD
+                imu_msg.angular_velocity.y = gy_dps * self.DEG_TO_RAD
+                imu_msg.angular_velocity.z = (gz_dps - self.gyro_z_bias_dps) * self.DEG_TO_RAD
 
-                imu_msg.linear_acceleration.x = ax
-                imu_msg.linear_acceleration.y = ay
-                imu_msg.linear_acceleration.z = az
+                # covariancia medida em bancada - deixa o EKF confiar nessa leitura
+                # pra rotacao em vez da odometria de comando (que e so uma estimativa)
+                imu_msg.angular_velocity_covariance[0] = self.GYRO_Z_VARIANCE
+                imu_msg.angular_velocity_covariance[4] = self.GYRO_Z_VARIANCE
+                imu_msg.angular_velocity_covariance[8] = self.GYRO_Z_VARIANCE
+
+                imu_msg.linear_acceleration.x = ax_g * self.G_TO_MS2
+                imu_msg.linear_acceleration.y = ay_g * self.G_TO_MS2
+                imu_msg.linear_acceleration.z = az_g * self.G_TO_MS2
 
                 self.pub_imu.publish(imu_msg)
-
-                # =========================
-                # TF
-                # =========================
-                t = TransformStamped()
-                t.header.stamp = imu_msg.header.stamp
-                t.header.frame_id = "base_link"
-                t.child_frame_id = "imu_link"
-
-                t.transform.rotation.x = qx
-                t.transform.rotation.y = qy
-                t.transform.rotation.z = qz
-                t.transform.rotation.w = qw
-
-                self.tf_broadcaster.sendTransform(t)
 
             except ValueError as exc:
                 self.get_logger().warning(f"Erro ao converter os valores recebidos: {line} ({exc})")
