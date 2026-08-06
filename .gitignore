@@ -1,2 +1,4 @@
 __pycache__/
 firmware_micro_controller/firmware/
+
+/.vscode
