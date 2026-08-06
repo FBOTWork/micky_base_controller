@@ -1,0 +1,15 @@
+{
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/pchenri/micky_ws/install/robot_sensors_publisher/lib/python3.10/site-packages",
+        "/home/pchenri/micky_ws/install/motors_controller/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/pchenri/micky_ws/install/robot_sensors_publisher/lib/python3.10/site-packages",
+        "/home/pchenri/micky_ws/install/motors_controller/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ]
+}

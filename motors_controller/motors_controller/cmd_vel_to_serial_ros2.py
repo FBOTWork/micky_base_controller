@@ -14,7 +14,7 @@ class CmdVelConverter(Node):
         super().__init__("cmd_vel_converter_node")
 
         self.YAW_DRIFT_COMP = 0.05   # fração de Vy somada a W para corrigir deriva no strafe
-        self.CMD_TIMEOUT_S = 0.3     # tempo sem /cmd_vel até mandar parada de segurança
+        self.CMD_TIMEOUT_S = 0.2     # tempo sem /cmd_vel até mandar parada de segurança
         self.last_cmd_time = self.get_clock().now()
         self.stop_sent = True        # evita reenviar "0,0,0" repetidamente
 

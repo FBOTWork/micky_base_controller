@@ -15,9 +15,9 @@ class CmdVelToOdom(Node):
         self.declare_parameter("odom_frame", "odom")
         self.declare_parameter("base_frame", "base_footprint")
         self.declare_parameter("publish_rate", 30.0)
-        self.declare_parameter("cmd_timeout", 0.3)
+        self.declare_parameter("cmd_timeout", 0.2)
         self.declare_parameter("linear_accel_limit", 0.5)
-        self.declare_parameter("angular_accel_limit", 0.5)
+        self.declare_parameter("angular_accel_limit", 1.4)
 
         self.odom_frame = self.get_parameter("odom_frame").get_parameter_value().string_value
         self.base_frame = self.get_parameter("base_frame").get_parameter_value().string_value

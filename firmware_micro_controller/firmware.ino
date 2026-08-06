@@ -29,17 +29,18 @@ int sinalFL = 0, sinalFR = 0, sinalRL = 0, sinalRR = 0;
 
 // driver TB6600: SW1=OFF, SW2=ON, SW3=OFF -> 1/8 microstep, motor 1.8 grau (200 steps/volta)
 const float RAIO_RODA = 0.045; // metros
-const long PULSOS_POR_REV = 1600;
+const long PULSOS_POR_REV = 2000;
 const float STEPS_POR_METRO = PULSOS_POR_REV / (2.0 * PI * RAIO_RODA);
 
 // timeout de seguranca no proprio firmware: se a serial degradar (ex: ruido,
 // desconexao) e nenhum comando valido novo chegar, para sozinho em vez de
 // continuar executando o ultimo move() para sempre
-const unsigned long SERIAL_TIMEOUT_MS = 200;
+const unsigned long SERIAL_TIMEOUT_MS = 500;
 unsigned long ultimoComandoValido = 0;
 bool roboParado = true;
 
 char bufferSerial[32];
+uint8_t posBufferSerial = 0;
 
 // ultimo comando efetivamente aplicado aos motores: usado pra nao reemitir
 // setMaxSpeed()/move() quando o /cmd_vel novo repete o mesmo valor
@@ -56,7 +57,6 @@ bool comandoMudou(float Vx, float Vy, float W) {
 
 void setup() {
   Serial.begin(115200);
-  Serial.setTimeout(100);
   Serial.println("Base Mecanum Pronta - Aguardando comandos do Python...");
 
   // Polaridade final: padrão simétrico esquerda/direita (confirmado por teste individual)
@@ -85,7 +85,14 @@ void aplicarMovimento(AccelStepper &motor, int &sinalAtual, float prop) {
 
   float vel = constrain(abs(prop) * STEPS_POR_METRO, 0.0, velocidadeMax);
   motor.setMaxSpeed(vel);
-  motor.move(1000000L * sinalNovo);
+
+  // so redefine o alvo (move()) quando o sentido muda ou o motor estava parado:
+  // no mesmo sentido, so mudar setMaxSpeed() ja e suficiente pro AccelStepper
+  // reajustar a rampa - chamar move() de novo a toa recalcula o perfil de
+  // aceleracao (computeNewSpeed()) sem necessidade a cada pacote
+  if (sinalNovo != sinalAtual) {
+    motor.move(1000000L * sinalNovo);
+  }
   sinalAtual = sinalNovo;
 }
 
@@ -123,42 +130,55 @@ void pararRobo() {
 }
 
 void loop() {
-  if (Serial.available() > 0) {
-    // buffer fixo em vez de String: evita fragmentacao de heap no loop, que
-    // com uptime longo degradava o parsing e travava o robo na ultima
-    // velocidade recebida (String aloca/realoca memoria dinamicamente)
-    size_t len = Serial.readBytesUntil('\n', bufferSerial, sizeof(bufferSerial) - 1);
-    bufferSerial[len] = '\0';
+  // le so os bytes que ja estao no buffer da UART, sem esperar o resto da
+  // linha chegar: Serial.readBytesUntil() bloqueava ate ~100ms quando so
+  // parte da linha tinha chegado, o que com o /cmd_vel do ROS publicando
+  // continuamente (varias linhas por segundo, quase sempre fragmentadas
+  // entre leituras) travava o loop() e os motorX.run() por perto disso a
+  // cada pacote - daí o engasgo. Via Monitor Serial manual isso nao aparecia
+  // porque uma linha digitada chega inteira de uma vez, com tempo ocioso
+  // de sobra entre comandos.
+  while (Serial.available() > 0) {
+    char c = Serial.read();
 
-    // strtok+atof em vez de sscanf("%f"): a avr-libc padrao do Arduino Mega/Uno
-    // nao suporta ponto flutuante no scanf (falharia silenciosamente)
-    char* tokVx = strtok(bufferSerial, ",");
-    char* tokVy = tokVx ? strtok(NULL, ",") : NULL;
-    char* tokW  = tokVy ? strtok(NULL, ",") : NULL;
+    if (c == '\n') {
+      bufferSerial[posBufferSerial] = '\0';
+      posBufferSerial = 0;
 
-    if (tokVx && tokVy && tokW) {
-      float Vx = atof(tokVx);
-      float Vy = atof(tokVy);
-      float W  = atof(tokW);
-      ultimoComandoValido = millis();
+      // strtok+atof em vez de sscanf("%f"): a avr-libc padrao do Arduino Mega/Uno
+      // nao suporta ponto flutuante no scanf (falharia silenciosamente)
+      char* tokVx = strtok(bufferSerial, ",");
+      char* tokVy = tokVx ? strtok(NULL, ",") : NULL;
+      char* tokW  = tokVy ? strtok(NULL, ",") : NULL;
 
-      // so reemite setMaxSpeed()/move() se o comando realmente mudou: chamar
-      // isso de novo a cada pacote (varias vezes por segundo) mesmo com a
-      // mesma velocidade reinicia o perfil de aceleracao do AccelStepper e
-      // causa os engasgos/ruido durante a partida
-      if (comandoMudou(Vx, Vy, W)) {
-        if (Vx == 0.0 && Vy == 0.0 && W == 0.0) {
-          pararRobo();
-          roboParado = true;
-        } else {
-          moverRoboContinuo(Vx, Vy, W);
-          roboParado = false;
+      if (tokVx && tokVy && tokW) {
+        float Vx = atof(tokVx);
+        float Vy = atof(tokVy);
+        float W  = atof(tokW);
+        ultimoComandoValido = millis();
+
+        // so reemite setMaxSpeed()/move() se o comando realmente mudou: chamar
+        // isso de novo a cada pacote (varias vezes por segundo) mesmo com a
+        // mesma velocidade reinicia o perfil de aceleracao do AccelStepper e
+        // causa os engasgos/ruido durante a partida
+        if (comandoMudou(Vx, Vy, W)) {
+          if (Vx == 0.0 && Vy == 0.0 && W == 0.0) {
+            pararRobo();
+            roboParado = true;
+          } else {
+            moverRoboContinuo(Vx, Vy, W);
+            roboParado = false;
+          }
+          ultimoVx = Vx;
+          ultimoVy = Vy;
+          ultimoW = W;
         }
-        ultimoVx = Vx;
-        ultimoVy = Vy;
-        ultimoW = W;
       }
+    } else if (posBufferSerial < sizeof(bufferSerial) - 1) {
+      bufferSerial[posBufferSerial++] = c;
     }
+    // linha maior que o buffer: os bytes excedentes sao descartados ate o
+    // proximo '\n' em vez de estourar o array
   }
 
   // parada de seguranca: se a serial parar de entregar comandos validos
