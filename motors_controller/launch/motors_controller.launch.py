@@ -15,8 +15,8 @@ def generate_launch_description():
 
     cmd_vel_node = Node(
         package='motors_controller',
-        executable='cmd_vel_to_serial',
-        name='cmd_vel_to_serial_ros2',
+        executable='inverse_kinematic',
+        name='inverse_kinematic_node',
         output='screen',
         parameters=[
             {'port': '/dev/arduino_robo'},

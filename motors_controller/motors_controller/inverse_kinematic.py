@@ -16,7 +16,10 @@ class CmdVelConverter(Node):
         self.YAW_DRIFT_COMP = 0.05   # fração de Vy somada a W para corrigir deriva no strafe
         self.CMD_TIMEOUT_S = 0.2     # tempo sem /cmd_vel até mandar parada de segurança
         self.last_cmd_time = self.get_clock().now()
-        self.stop_sent = True        # evita reenviar "0,0,0" repetidamente
+        self.stop_sent = True        # evita reenviar zeros repetidamente
+
+        # Geometria do robô (precisa bater com o L usado antes no firmware, #define L 0.38f)
+        self.L = 0.38
 
         self.declare_parameter("port", "/dev/arduino_robo")
         self.declare_parameter("baud", 115200)
@@ -51,9 +54,20 @@ class CmdVelConverter(Node):
                 port = self.find_serial_port(port)
         raise SystemExit
 
-    def send_serial(self, vx, vy, vw):
-        # protocolo esperado pelo firmware: "Vx,Vy,W\n" — cinemática fica no Arduino
-        comando = f"{vx:.2f},{vy:.2f},{vw:.2f}\n"
+    def cinematica_inversa(self, vx, vy, vw):
+        # Mesma matriz que estava em Mover_Robo() no firmware:
+        # FL = Vx+Vy+W*L | FR = Vx-Vy-W*L | RL = Vx-Vy+W*L | RR = Vx+Vy-W*L
+        L = self.L
+        v_fl = vx + vy + (vw * L)
+        v_fr = vx - vy - (vw * L)
+        v_rl = vx - vy + (vw * L)
+        v_rr = vx + vy - (vw * L)
+        return v_fl, v_fr, v_rl, v_rr
+
+    def send_serial(self, v_fl, v_fr, v_rl, v_rr):
+        # novo protocolo: velocidade linear (m/s) por roda, ordem FL,FR,RL,RR
+        # firmware agora só faz Aplicar_Movimento() direto por roda, sem Mover_Robo()
+        comando = f"{v_fl:.3f},{v_fr:.3f},{v_rl:.3f},{v_rr:.3f}\n"
         try:
             self.arduino.write(comando.encode("utf-8"))
         except Exception as e:
@@ -68,14 +82,16 @@ class CmdVelConverter(Node):
         vw_effective = vw + (vy * self.YAW_DRIFT_COMP)  # injeta a correção de deriva no giro
 
         self.stop_sent = (vx == 0.0 and vy == 0.0 and vw_effective == 0.0)
-        self.send_serial(vx, vy, vw_effective)
+
+        v_fl, v_fr, v_rl, v_rr = self.cinematica_inversa(vx, vy, vw_effective)
+        self.send_serial(v_fl, v_fr, v_rl, v_rr)
 
     def watchdog_check(self):
         elapsed = (self.get_clock().now() - self.last_cmd_time).nanoseconds / 1e9
         if elapsed > self.CMD_TIMEOUT_S and not self.stop_sent:
             # /cmd_vel parou de chegar (ex: teleop_twist_keyboard só publica no keypress) — força parada
             self.get_logger().warn("Sem /cmd_vel há muito tempo — enviando parada de segurança")
-            self.send_serial(0.0, 0.0, 0.0)
+            self.send_serial(0.0, 0.0, 0.0, 0.0)
             self.stop_sent = True
 
 
@@ -87,7 +103,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.send_serial(0.0, 0.0, 0.0)  # garante parada mesmo em Ctrl+C
+        node.send_serial(0.0, 0.0, 0.0, 0.0)  # garante parada mesmo em Ctrl+C
         node.destroy_node()
         rclpy.shutdown()
 

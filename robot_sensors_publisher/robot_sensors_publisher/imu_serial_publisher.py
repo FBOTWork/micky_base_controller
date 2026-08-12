@@ -12,12 +12,14 @@ import glob
 
 class ImuSerialPublisher(Node):
 
-    # Firmware manda telemetria de DOIS MPU6050 numa linha so:
-    # roll1,pitch1,accX1,accY1,accZ1,gyroX1,gyroY1,gyroZ1,temp1,
+    # Firmware manda telemetria de DOIS MPU9250 numa linha so:
+    # roll1,pitch1,yaw1,accX1,accY1,accZ1,gyroX1,gyroY1,gyroZ1,temp1,
     # roll2,pitch2,accX2,accY2,accZ2,gyroX2,gyroY2,gyroZ2,temp2,botao,motor;
-    # so usamos os 9 primeiros campos (MPU1), que e o que esta fisicamente
+    # so usamos os 10 primeiros campos (MPU1), que e o que esta fisicamente
     # alinhado com o chassi - o resto (MPU2/botao/motor) e ignorado aqui.
-    MIN_FIELDS = 9
+    # yaw1 vem do magnetometro do MPU1 (AK8963), ja tilt-compensado pelo
+    # firmware - e o unico heading absoluto real que existe no robo hoje.
+    MIN_FIELDS = 10
 
     # firmware manda giro em graus/s e acel em g; sensor_msgs/Imu exige rad/s e m/s^2
     DEG_TO_RAD = math.pi / 180.0
@@ -26,6 +28,13 @@ class ImuSerialPublisher(Node):
     # variancia do giro Z medida em bancada com o robo parado (rad/s)^2 - se
     # trocar a IMU ou a montagem, remedir com o robo parado e atualizar aqui
     GYRO_Z_VARIANCE = 3.5e-6
+
+    # variancia do heading do magnetometro (rad)^2 - valor de partida
+    # conservador (~13 graus de desvio padrao), ja que motor de passo/chassi
+    # metalico perto da IMU pode distorcer a leitura. Meça girando o robo
+    # devagar num heading conhecido e comparando com o valor lido; se o
+    # ruido/salto for maior que isso, aumente ainda mais.
+    YAW_VARIANCE = 0.05
 
     CALIBRATION_DURATION_S = 2.0
 
@@ -52,6 +61,18 @@ class ImuSerialPublisher(Node):
 
         self.gyro_z_bias_dps = 0.0
 
+        # calibracao do bias do giro Z agora e feita em segundo plano, dentro
+        # do proprio timer de publicacao (ver read_and_publish/_update_gyro_calibration)
+        # em vez de bloquear o __init__ por CALIBRATION_DURATION_S: bloquear
+        # aqui deixava /imu/data sem publicar nada por 2s logo na largada,
+        # enquanto /odom ja estava de pe - quando a primeira leitura (com
+        # heading do magnetometro) finalmente chegava, o EKF via um "salto"
+        # de uma vez e se corrigia bruscamente, desalinhando o mapa que o
+        # slam_toolbox ja tinha comecado a desenhar com a referencia antiga.
+        self.calibrating = False
+        self.calib_samples = []
+        self.calib_deadline = None
+
         if self.serial_conn is not None:
             self.serial_conn.setDTR(False)
             self.serial_conn.setRTS(False)
@@ -60,10 +81,9 @@ class ImuSerialPublisher(Node):
             self.serial_conn.reset_input_buffer()
 
             self.get_logger().info(f"Serial conectada em {self.serial_port}")
-
-            # assume o robo parado nos primeiros segundos pra estimar o bias do
-            # giro Z e descontar ele de toda leitura publicada depois
-            self.gyro_z_bias_dps = self.calibrate_gyro_z(self.serial_conn)
+            self.get_logger().info("Calibrando bias do giro Z em segundo plano - mantenha o robô parado...")
+            self.calibrating = True
+            self.calib_deadline = time.time() + self.CALIBRATION_DURATION_S
         else:
             self.get_logger().error(
                 "Não foi possível abrir a porta serial. O tópico não será publicado até que o dispositivo esteja disponível."
@@ -108,37 +128,20 @@ class ImuSerialPublisher(Node):
 
         return None
 
-    def calibrate_gyro_z(self, conn):
-        self.get_logger().info("Calibrando bias do giro Z - mantenha o robô parado...")
+    def _update_gyro_calibration(self, gz_dps):
+        # acumula amostras de gyroZ1 cru (bias ainda nao descontado) enquanto
+        # calibrando; ao passar do deadline, fecha a media e passa a usar o
+        # bias real dali em diante. Publicacao continua rolando o tempo todo
+        # (com bias=0 ate a calibracao fechar), sem gap de /imu/data.
+        self.calib_samples.append(gz_dps)
 
-        samples = []
-        deadline = time.time() + self.CALIBRATION_DURATION_S
-
-        while time.time() < deadline:
-            raw = conn.readline()
-            line = raw.decode("utf-8", errors="ignore").strip().replace(";", "")
-
-            if not line:
-                continue
-
-            parts = line.split(",")
-            if len(parts) < self.MIN_FIELDS:
-                continue
-
-            try:
-                samples.append(float(parts[7]))  # gyroZ1
-            except ValueError:
-                continue
-
-        if not samples:
-            self.get_logger().warning(
-                "Calibração do giro Z não recebeu amostras válidas - seguindo sem correção de bias."
+        if time.time() >= self.calib_deadline:
+            self.gyro_z_bias_dps = sum(self.calib_samples) / len(self.calib_samples)
+            self.get_logger().info(
+                f"Bias do giro Z: {self.gyro_z_bias_dps:.4f}°/s ({len(self.calib_samples)} amostras)"
             )
-            return 0.0
-
-        bias = sum(samples) / len(samples)
-        self.get_logger().info(f"Bias do giro Z: {bias:.4f}°/s ({len(samples)} amostras)")
-        return bias
+            self.calibrating = False
+            self.calib_samples = []
 
     # =========================
     # EULER → QUATERNION
@@ -182,12 +185,16 @@ class ImuSerialPublisher(Node):
                 return
 
             try:
-                roll_deg, pitch_deg, ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps, _temp1 = (
+                roll_deg, pitch_deg, yaw_deg, ax_g, ay_g, az_g, gx_dps, gy_dps, gz_dps, _temp1 = (
                     float(v) for v in parts[: self.MIN_FIELDS]
                 )
 
                 roll = math.radians(roll_deg)
                 pitch = math.radians(pitch_deg)
+                yaw = math.radians(yaw_deg)
+
+                if self.calibrating:
+                    self._update_gyro_calibration(gz_dps)
 
                 # =========================
                 # IMU MESSAGE
@@ -196,17 +203,24 @@ class ImuSerialPublisher(Node):
                 imu_msg.header.stamp = self.get_clock().now().to_msg()
                 imu_msg.header.frame_id = "imu_link"
 
-                # Sem magnetometro e sem integracao de yaw no firmware (MPU6050 so
-                # tem accel+giro): roll/pitch vem do acelerometro, yaw fica fixo em
-                # 0 aqui. O EKF NAO deve fundir orientacao absoluta desse topico -
-                # so a velocidade angular (vyaw), que e o unico dado real de giro
-                # disponivel.
-                qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, 0.0)
+                # roll/pitch vem do acelerometro; yaw agora vem do magnetometro
+                # (AK8963 do MPU1), ja tilt-compensado pelo firmware - e o unico
+                # heading absoluto real do robo. O EKF (ekf.yaml) fica configurado
+                # pra fundir esse yaw absoluto + a velocidade angular (vyaw) do
+                # giro, e ignorar o heading da odometria de comando.
+                qx, qy, qz, qw = self.euler_to_quaternion(roll, pitch, yaw)
 
                 imu_msg.orientation.x = qx
                 imu_msg.orientation.y = qy
                 imu_msg.orientation.z = qz
                 imu_msg.orientation.w = qw
+
+                # roll/pitch nao sao fundidos pelo EKF (robo 2D, two_d_mode: true
+                # no ekf.yaml) - covariancia alta so pra nao serem levados a serio
+                # por outro consumidor eventual desse topico. yaw usa o valor medido.
+                imu_msg.orientation_covariance[0] = 999.0
+                imu_msg.orientation_covariance[4] = 999.0
+                imu_msg.orientation_covariance[8] = self.YAW_VARIANCE
 
                 imu_msg.angular_velocity.x = gx_dps * self.DEG_TO_RAD
                 imu_msg.angular_velocity.y = gy_dps * self.DEG_TO_RAD
