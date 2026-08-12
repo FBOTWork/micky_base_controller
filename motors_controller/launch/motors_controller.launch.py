@@ -13,7 +13,7 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration('use_rviz', default='false')
     rviz_config = LaunchConfiguration('rviz_config', default='')
 
-    cmd_vel_node = Node(
+    inverse_kinematic_node = Node(
         package='motors_controller',
         executable='inverse_kinematic',
         name='inverse_kinematic_node',
@@ -44,7 +44,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_rviz', default_value='false', description='Activate RViz'),
         DeclareLaunchArgument('rviz_config', default_value='', description='Path to the RViz configuration file'),
-        cmd_vel_node,
+        inverse_kinematic_node,
         cmd_vel_to_odom_node,
         rviz_node
     ])
