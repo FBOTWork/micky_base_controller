@@ -19,7 +19,7 @@ def generate_launch_description():
         name='imu_serial_publisher_node',
         output='screen',
         parameters=[
-            {'port': '/dev/ttyUSB0'},
+            {'port': '/dev/arduino_imu'},
             {'baud': 115200},
             {'frame_id': 'imu_link'}
         ]
@@ -31,7 +31,7 @@ def generate_launch_description():
         name='inverse_kinematic_node',
         output='screen',
         parameters=[
-            {'motor_port': '/dev/ttyUSB1'},
+            {'motor_port': '/dev/arduino_robo'},
             {'motor_baud': 115200}
         ]
 

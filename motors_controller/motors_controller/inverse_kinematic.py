@@ -66,7 +66,7 @@ class CmdVelConverter(Node):
         self.accel_x_bias = 0.0
 
         # --- Parâmetros de conexão ---
-        self.declare_parameter("motor_port", "/dev/ttyUSB1")
+        self.declare_parameter("motor_port", "/dev/arduino_robo")
         self.declare_parameter("motor_baud", 115200)
 
         motor_port = self.get_parameter("motor_port").get_parameter_value().string_value
@@ -80,14 +80,13 @@ class CmdVelConverter(Node):
         self.watchdog_timer = self.create_timer(0.1, self.watchdog_check)
 
     # ---------- Conexão serial ----------
+    # ---------- Conexão serial ----------
     def find_serial_port(self, preferred_port):
-        if preferred_port and os.path.exists(preferred_port):
-            return preferred_port
+        self.get_logger().info(f"Aguardando a porta {preferred_port} conectar...")
         while rclpy.ok():
-            candidates = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
-            if candidates:
-                return candidates[0]
-            time.sleep(1)
+            if preferred_port and os.path.exists(preferred_port):
+                return preferred_port
+            time.sleep(1) # Fica checando a cada 1 segundo até o cabo ser plugado
         raise SystemExit
 
     def open_serial(self, port, baud):
