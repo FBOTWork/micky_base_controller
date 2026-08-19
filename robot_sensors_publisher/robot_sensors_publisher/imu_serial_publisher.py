@@ -20,8 +20,7 @@ class ImuNode(Node):
         self.frame_id = self.get_parameter("frame_id").get_parameter_value().string_value
 
         self.ser = serial.Serial(port, baud, timeout=1)
-        # evita reset do Arduino ao abrir a porta (equivalente ao que já
-        # discutimos no cmd_vel_converter)
+        
         self.ser.setDTR(False)
         self.ser.setRTS(False)
         time.sleep(2.0)
@@ -31,8 +30,7 @@ class ImuNode(Node):
 
         self.get_logger().info("IMU node started")
 
-        # em rospy isso era um while + rate.sleep(); em rclpy o idiomático
-        # é um timer disparando a leitura, e rclpy.spin() cuidando do loop
+        
         self.timer = self.create_timer(1.0 / 50.0, self.read_and_publish)  # 50Hz
 
     def read_and_publish(self):
