@@ -19,7 +19,7 @@ def generate_launch_description():
         name='imu_serial_publisher_node',
         output='screen',
         parameters=[
-            {'port': '/dev/ttyUSB0'},
+            {'port': '/dev/arduino_imu'},
             {'baud': 115200},
             {'frame_id': 'imu_link'}
         ]
@@ -31,16 +31,16 @@ def generate_launch_description():
         name='inverse_kinematic_node',
         output='screen',
         parameters=[
-            {'motor_port': '/dev/ttyUSB1'},
+            {'motor_port': '/dev/arduino_robo'},
             {'motor_baud': 115200}
         ]
 
     )
 
-    cmd_vel_to_odom_node = Node(
+    imu_odom_node = Node(
         package='motors_controller',
-        executable='cmd_vel_to_odom',
-        name='cmd_vel_to_odom_node',
+        executable='imu_odom_node',
+        name='imu_odom_node',
         output='screen',
     )
 
@@ -58,6 +58,6 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz_config', default_value='', description='Path to the RViz configuration file'),
         imu_serial_publisher_node,
         inverse_kinematic_node,
-        cmd_vel_to_odom_node,
+        imu_odom_node,
         rviz_node
     ])
