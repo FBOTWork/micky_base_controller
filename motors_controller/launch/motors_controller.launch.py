@@ -37,12 +37,6 @@ def generate_launch_description():
 
     )
 
-    imu_odom_node = Node(
-        package='motors_controller',
-        executable='imu_odom_node',
-        name='imu_odom_node',
-        output='screen',
-    )
 
     rviz_node = Node(
         package='rviz2',
@@ -58,6 +52,5 @@ def generate_launch_description():
         DeclareLaunchArgument('rviz_config', default_value='', description='Path to the RViz configuration file'),
         imu_serial_publisher_node,
         inverse_kinematic_node,
-        imu_odom_node,
         rviz_node
     ])
