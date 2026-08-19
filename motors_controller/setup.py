@@ -24,7 +24,7 @@ setup(
     entry_points={
         'console_scripts': [
         'inverse_kinematic = motors_controller.inverse_kinematic:main',
-        'cmd_vel_to_odom = motors_controller.cmd_vel_to_odom_ros2:main',
+        'imu_odom_node = motors_controller.imu_odom_node:main',
         ],
     },
 )
