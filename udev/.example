@@ -1,0 +1,17 @@
+# Exemplo de regra usb para oarduino, stm e hokuyo
+#Para criar: sudo cp 99-robo.rules /etc/udev/rules.d/
+#Para aplicar: sudo udevadm control --reload-rules e depois  sudo udevadm trigger
+# Regras udev para o robo Micky
+# Como os VIDs e PIDs de todos os equipamentos sao unicos,
+# podemos identificar cada um independente da porta USB fisica.
+
+# 1. Chip CH340 (ttyUSB*)
+# NOTA: Se este for a IMU na vida real, troque "arduino_robo" por "arduino_imu"
+#SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", SYMLINK+="arduino_imu", MODE="0666"
+
+# 2. Chip STMicroelectronics (ttyACM*)
+# NOTA: Se este for o Controlador na vida real, troque "arduino_imu" por "arduino_robo"
+#SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", SYMLINK+="arduino_robo", MODE="0666"
+
+# 3. Hokuyo URG-Series (front lidar)
+#SUBSYSTEM=="tty", ATTRS{idVendor}=="15d1", ATTRS{idProduct}=="0000", SYMLINK+="hokuyo_front", MODE="0666"

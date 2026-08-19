@@ -41,7 +41,27 @@ class InverseKinematic(Node):
         self.yaw_integral = 0.0
         self.yaw_last_error = 0.0
 
-        self.declare_parameter("motor_port", "/dev/ttyUSB1")
+        self.KP_VX = 0.8
+        self.KI_VX = 0.3
+        self.VX_INTEGRAL_LEAK = 0.95
+        self.VX_INTEGRAL_LIMIT = 0.3
+        self.VX_CORRECTION_LIMIT = 0.15
+        self.VY_STRAFE_THRESHOLD = 0.05
+        self.VX_INTENT_THRESHOLD = 0.02
+        self.ACCEL_LOWPASS_ALPHA = 0.15
+        self.BUMP_Z_THRESHOLD = 2.0
+        self.GRAVITY = 9.81
+
+        self.accel_x_filtered = 0.0
+        self.vx_integral = 0.0
+        self.strafe_locked = False
+
+        self.calibrating_accel = True
+        self.accel_calib_samples = []
+        self.ACCEL_CALIB_SAMPLES_N = 50
+        self.accel_x_bias = 0.0
+
+        self.declare_parameter("motor_port", "/dev/arduino_robo")
         self.declare_parameter("motor_baud", 115200)
 
         motor_port = self.get_parameter("motor_port").get_parameter_value().string_value
@@ -56,12 +76,10 @@ class InverseKinematic(Node):
         self.watchdog_timer = self.create_timer(0.1, self.watchdog_check)
 
     def find_serial_port(self, preferred_port):
-        if preferred_port and os.path.exists(preferred_port):
-            return preferred_port
+        self.get_logger().info(f"Aguardando a porta {preferred_port} conectar...")
         while rclpy.ok():
-            candidates = sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
-            if candidates:
-                return candidates[0]
+            if preferred_port and os.path.exists(preferred_port):
+                return preferred_port
             time.sleep(1)
         raise SystemExit
 
