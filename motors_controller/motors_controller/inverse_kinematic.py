@@ -61,7 +61,7 @@ class InverseKinematic(Node):
         self.ACCEL_CALIB_SAMPLES_N = 50
         self.accel_x_bias = 0.0
 
-        self.declare_parameter("motor_port", "/dev/arduino_robo")
+        self.declare_parameter("motor_port", "/dev/base_controller")
         self.declare_parameter("motor_baud", 115200)
 
         motor_port = self.get_parameter("motor_port").get_parameter_value().string_value
