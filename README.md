@@ -75,7 +75,7 @@ firmware_micro_controller/firmware.ino
 ## ⚙️ 3. Configure USB Port (udev)
 
 The robot has **two** USB-serial devices that must resolve to different,
-stable names: the motors Arduino (`/dev/arduino_robo`) and the IMU
+stable names: the motors controller (`/dev/stm_controller`) and the IMU
 (`/dev/arduino_imu`).
 
 ⚠️ **Both currently use the same CH340 USB-serial chip**
@@ -137,7 +137,7 @@ sudo udevadm trigger
 ### 🔹 Test
 
 ```bash
-ls -l /dev/arduino_robo /dev/arduino_imu
+ls -l /dev/stm_controller /dev/arduino_imu
 ```
 
 Both should exist and point to different `ttyUSB*`/`ttyACM*` devices.
