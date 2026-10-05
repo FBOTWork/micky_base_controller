@@ -94,23 +94,23 @@ void Receber_Dados_USB(uint8_t* Buf, uint32_t Len) {
     }
 }
 
-// Configuração ATUALIZADA de acordo com o mapeamento no GPIOA
+// Mapeamento PUL/DIR dos quatro motores no GPIOB
 void Motores_Init(void) {
-    // Frente Esquerda (FL): PUL = PA4, DIR = PA5
-    motorFL.port_pul = GPIOA; motorFL.pin_pul = GPIO_PIN_4;
-    motorFL.port_dir = GPIOA; motorFL.pin_dir = GPIO_PIN_5; motorFL.invert_dir = true;
+    // Frente Esquerda (FL): PUL = PB15, DIR = PB14
+    motorFL.port_pul = GPIOB; motorFL.pin_pul = GPIO_PIN_15;
+    motorFL.port_dir = GPIOB; motorFL.pin_dir = GPIO_PIN_14; motorFL.invert_dir = true;
 
-    // Frente Direita (FR): PUL = PA6, DIR = PA7
-    motorFR.port_pul = GPIOA; motorFR.pin_pul = GPIO_PIN_6;
-    motorFR.port_dir = GPIOA; motorFR.pin_dir = GPIO_PIN_7; motorFR.invert_dir = false;
+    // Frente Direita (FR): PUL = PB6, DIR = PB5
+    motorFR.port_pul = GPIOB; motorFR.pin_pul = GPIO_PIN_6;
+    motorFR.port_dir = GPIOB; motorFR.pin_dir = GPIO_PIN_5; motorFR.invert_dir = false;
 
-    // Atrás Esquerda (RL): PUL = PA0, DIR = PA1
-    motorRL.port_pul = GPIOA; motorRL.pin_pul = GPIO_PIN_0;
-    motorRL.port_dir = GPIOA; motorRL.pin_dir = GPIO_PIN_1; motorRL.invert_dir = true;
+    // Atrás Esquerda (RL): PUL = PB13, DIR = PB12
+    motorRL.port_pul = GPIOB; motorRL.pin_pul = GPIO_PIN_13;
+    motorRL.port_dir = GPIOB; motorRL.pin_dir = GPIO_PIN_12; motorRL.invert_dir = true;
 
-    // Atrás Direita (RR): PUL = PA2, DIR = PA3
-    motorRR.port_pul = GPIOA; motorRR.pin_pul = GPIO_PIN_2;
-    motorRR.port_dir = GPIOA; motorRR.pin_dir = GPIO_PIN_3; motorRR.invert_dir = false;
+    // Atrás Direita (RR): PUL = PB3, DIR = PB4
+    motorRR.port_pul = GPIOB; motorRR.pin_pul = GPIO_PIN_3;
+    motorRR.port_dir = GPIOB; motorRR.pin_dir = GPIO_PIN_4; motorRR.invert_dir = false;
 }
 
 void Aplicar_Movimento(StepperMotor* motor, float velocidade_linear) {
@@ -148,8 +148,8 @@ void Processar_Rampas(void) {
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM3) {
-        // Desliga os pinos de pulso de todos os 4 motores simultaneamente (PA0, PA2, PA4, PA6)
-        HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0 | GPIO_PIN_2 | GPIO_PIN_4 | GPIO_PIN_6, GPIO_PIN_RESET);
+        // Desliga os pinos de pulso dos motores simultaneamente.
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3 | GPIO_PIN_6 | GPIO_PIN_13 | GPIO_PIN_15, GPIO_PIN_RESET);
 
         float dt_timer = 0.0001f;
         StepperMotor* motores[] = {&motorFL, &motorFR, &motorRL, &motorRR};
@@ -360,9 +360,9 @@ static void MX_GPIO_Init(void)
   /* Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);
 
-  /* Configure GPIO pin Output Level para PA0 ate PA7 */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3|
-                           GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7, GPIO_PIN_RESET);
+  /* Configure motor GPIO output levels */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|
+                           GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15, GPIO_PIN_RESET);
 
   /* Configure GPIO pin : PC13 (LED Interno) */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
@@ -371,13 +371,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /* Configure GPIO pins : PA0 ate PA7 (Sinais de PUL e DIR dos 4 Motores) */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3|
-                        GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7;
+  /* Configure motor GPIO pins: PB3-PB6 and PB12-PB15 */
+  GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|
+                        GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_14|GPIO_PIN_15;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* Configure GPIO pin : PB0 (Botao Emergencia) */
   GPIO_InitStruct.Pin = GPIO_PIN_0;
@@ -399,4 +399,3 @@ void assert_failed(uint8_t *file, uint32_t line)
 {
 }
 #endif /* USE_FULL_ASSERT */
-
