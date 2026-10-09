@@ -51,18 +51,21 @@ static void MX_TIM3_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define VELOCIDADE_MAX 1500.0f
-#define ACELERACAO 4000.0f
-#define ACELERACAO_PARADA 5000.0f
+#define VELOCIDADE_MAX 4800.0f
+#define ACELERACAO 14000.0f
+#define ACELERACAO_PARADA 16000.0f
 #define RAIO_RODA 0.05f
-#define PULSOS_POR_REV 2000.0f
+#define PULSOS_POR_REV 6400.0f
 #define PI 3.14159265359f
 #define STEPS_POR_METRO (PULSOS_POR_REV / (2.0f * PI * RAIO_RODA))
+#define FREQ_TIMER 50000.0f // TIM3: Prescaler=71, Period=19 -> 1 MHz / 20 ticks = 50 kHz
+#define FASE_POR_HZ (4294967296.0f / FREQ_TIMER) // 2^32 / FREQ_TIMER
 
 typedef struct {
     GPIO_TypeDef* port_pul; uint16_t pin_pul;
     GPIO_TypeDef* port_dir; uint16_t pin_dir;
-    float target_speed, current_speed, acceleration, position_accumulator;
+    float target_speed, current_speed, acceleration;
+    uint32_t step_phase; volatile uint32_t step_increment;
     int direction; bool invert_dir;
 } StepperMotor;
 
@@ -143,26 +146,25 @@ void Processar_Rampas(void) {
         } else if (m->current_speed < 0) {
             m->direction = -1; HAL_GPIO_WritePin(m->port_dir, m->pin_dir, m->invert_dir ? GPIO_PIN_SET : GPIO_PIN_RESET);
         } else m->direction = 0;
+
+        // Incremento de fase do acumulador da interrupção (atualizado depois do DIR).
+        m->step_increment = (uint32_t)(fabsf(m->current_speed) * FASE_POR_HZ);
     }
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM3) {
         // Desliga os pinos de pulso dos motores simultaneamente.
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3 | GPIO_PIN_6 | GPIO_PIN_13 | GPIO_PIN_15, GPIO_PIN_RESET);
+        GPIOB->BRR = GPIO_PIN_3 | GPIO_PIN_6 | GPIO_PIN_13 | GPIO_PIN_15;
 
-        float dt_timer = 0.0001f;
+        // Acumulador de fase em inteiros (sem float): cada estouro de 32 bits gera um pulso.
         StepperMotor* motores[] = {&motorFL, &motorFR, &motorRL, &motorRR};
 
         for(int i = 0; i < 4; i++) {
             StepperMotor* m = motores[i];
-            if (m->direction != 0) {
-                m->position_accumulator += fabs(m->current_speed) * dt_timer;
-                if (m->position_accumulator >= 1.0f) {
-                    m->position_accumulator -= 1.0f;
-                    HAL_GPIO_WritePin(m->port_pul, m->pin_pul, GPIO_PIN_SET);
-                }
-            }
+            uint32_t anterior = m->step_phase;
+            m->step_phase = anterior + m->step_increment;
+            if (m->step_phase < anterior) m->port_pul->BSRR = m->pin_pul;
         }
     }
 }
@@ -319,7 +321,7 @@ static void MX_TIM3_Init(void)
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 71;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 49;
+  htim3.Init.Period = 19;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
