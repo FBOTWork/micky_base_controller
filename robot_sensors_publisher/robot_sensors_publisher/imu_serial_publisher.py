@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import math
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu
@@ -58,6 +59,10 @@ class ImuNode(Node):
             try:
                 data = [float(x) for x in parts]
             except ValueError:
+                self.get_logger().warn(f"Invalid numeric value in IMU line: {line}", throttle_duration_sec=5.0)
+                return
+
+            if any(not math.isfinite(value) for value in data):
                 self.get_logger().warn(f"Invalid numeric value in IMU line: {line}", throttle_duration_sec=5.0)
                 return
 

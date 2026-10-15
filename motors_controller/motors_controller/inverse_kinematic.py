@@ -31,9 +31,14 @@ class InverseKinematic(Node):
         self.KD_YAW = 0.05
         self.YAW_INTEGRAL_LIMIT = 1.0
         self.VW_LOCK_THRESHOLD = 0.02
+        self.VW_TURN_OVERRIDE_THRESHOLD = 0.25
         self.YAW_ERROR_DEADBAND = 0.015
         self.IMU_WARMUP_S = 2.0
+        self.IMU_TIMEOUT_S = 0.25
         self.imu_first_sample_time = None
+        self.last_imu_time = None
+        self.imu_valid = False
+        self.imu_rx_buffer = bytearray()
 
         self.current_yaw = 0.0
         self.target_heading = 0.0
@@ -63,17 +68,20 @@ class InverseKinematic(Node):
 
         self.declare_parameter("motor_port", "/dev/base_controller")
         self.declare_parameter("motor_baud", 115200)
+        self.declare_parameter("imu_frame_id", "imu_link")
 
         motor_port = self.get_parameter("motor_port").get_parameter_value().string_value
         motor_baud = self.get_parameter("motor_baud").get_parameter_value().integer_value
+        self.imu_frame_id = self.get_parameter("imu_frame_id").get_parameter_value().string_value
 
         self.motor_serial = self.open_serial(self.find_serial_port(motor_port), motor_baud)
         self.get_logger().info(f"Motor (STM32) conectado em {self.motor_serial.port} a {motor_baud} bps")
 
         self.subscription = self.create_subscription(Twist, "/cmd_vel", self.cmd_vel_callback, 10)
-        self.imu_subscription = self.create_subscription(Imu, "/imu/data_raw", self.imu_callback, 10)
+        self.imu_publisher = self.create_publisher(Imu, "/imu/data_raw", 10)
 
         self.watchdog_timer = self.create_timer(0.1, self.watchdog_check)
+        self.imu_read_timer = self.create_timer(0.02, self.read_imu_serial)
 
     def find_serial_port(self, preferred_port):
         self.get_logger().info(f"Aguardando a porta {preferred_port} conectar...")
@@ -86,7 +94,7 @@ class InverseKinematic(Node):
     def open_serial(self, port, baud):
         while rclpy.ok():
             try:
-                conn = serial.Serial(port, baud, timeout=0.05)
+                conn = serial.Serial(port, baud, timeout=0)
                 conn.setDTR(False)
                 conn.setRTS(False)
                 time.sleep(2)
@@ -98,22 +106,109 @@ class InverseKinematic(Node):
         raise SystemExit
 
     def imu_callback(self, msg: Imu):
-        if self.imu_first_sample_time is None:
-            self.imu_first_sample_time = self.get_clock().now()
-
         qx = msg.orientation.x
         qy = msg.orientation.y
         qz = msg.orientation.z
         qw = msg.orientation.w
 
+        if not all(math.isfinite(value) for value in (qx, qy, qz, qw)):
+            self.imu_valid = False
+            return
+
+        quaternion = self.normalizar_quaternion(qx, qy, qz, qw)
+        if quaternion is None:
+            self.imu_valid = False
+            return
+
+        qx, qy, qz, qw = quaternion
         self.current_yaw = math.atan2(
             2.0 * (qw * qz + qx * qy),
             1.0 - 2.0 * (qy * qy + qz * qz),
         )
+        now = self.get_clock().now()
+        if self.imu_first_sample_time is None:
+            self.imu_first_sample_time = now
+        self.last_imu_time = now
+        self.imu_valid = True
+
+    def read_imu_serial(self):
+        try:
+            available = self.motor_serial.in_waiting
+            if available:
+                self.imu_rx_buffer.extend(self.motor_serial.read(available))
+
+            while b"\n" in self.imu_rx_buffer:
+                raw_line, _, remainder = self.imu_rx_buffer.partition(b"\n")
+                self.imu_rx_buffer = bytearray(remainder)
+                line = raw_line.decode("utf-8", errors="ignore").strip()
+                if line:
+                    self.process_imu_line(line)
+
+            if len(self.imu_rx_buffer) > 512:
+                self.imu_rx_buffer.clear()
+                self.get_logger().warn("Buffer serial da IMU excedeu o limite; dados descartados.")
+        except serial.SerialException as exc:
+            self.imu_valid = False
+            self.get_logger().warn(f"Erro lendo IMU pela serial do STM32: {exc}", throttle_duration_sec=5.0)
+
+    def process_imu_line(self, line):
+        if line.startswith("IMU_STATUS:"):
+            self.get_logger().info(f"STM32 {line}", throttle_duration_sec=5.0)
+            return
+
+        if "IMU:" not in line:
+            return
+
+        payload = line.split("IMU:", 1)[1].replace(";", "").strip()
+        parts = payload.split(",")
+        if len(parts) != 10:
+            self.get_logger().warn(f"Linha de IMU inválida: {line}", throttle_duration_sec=5.0)
+            return
+
+        try:
+            data = [float(value) for value in parts]
+        except ValueError:
+            self.get_logger().warn(f"Valores inválidos na linha da IMU: {line}", throttle_duration_sec=5.0)
+            return
+
+        if not all(math.isfinite(value) for value in data):
+            self.get_logger().warn(f"Valores não finitos na linha da IMU: {line}", throttle_duration_sec=5.0)
+            return
+
+        msg = Imu()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.imu_frame_id
+        msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w = data[:4]
+        msg.orientation_covariance = [
+            0.05, 0.0, 0.0,
+            0.0, 0.05, 0.0,
+            0.0, 0.0, 0.30,
+        ]
+        msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z = data[4:7]
+        msg.angular_velocity_covariance = [
+            0.02, 0.0, 0.0,
+            0.0, 0.02, 0.0,
+            0.0, 0.0, 0.02,
+        ]
+        msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z = data[7:10]
+        msg.linear_acceleration_covariance = [
+            0.04, 0.0, 0.0,
+            0.0, 0.04, 0.0,
+            0.0, 0.0, 0.04,
+        ]
+        self.imu_callback(msg)
+        self.imu_publisher.publish(msg)
 
     @staticmethod
     def normalizar_angulo(angulo):
         return math.atan2(math.sin(angulo), math.cos(angulo))
+
+    @staticmethod
+    def normalizar_quaternion(qx, qy, qz, qw):
+        norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+        if not math.isfinite(norm) or norm < 1e-9:
+            return None
+        return qx / norm, qy / norm, qz / norm, qw / norm
 
     def cinematica_inversa(self, vx, vy, vw):
         L = self.L
@@ -133,10 +228,18 @@ class InverseKinematic(Node):
     def calcular_correcao_heading(self, vw_comandado, dt):
         imu_pronta = (
             self.imu_first_sample_time is not None
+            and self.last_imu_time is not None
             and (self.get_clock().now() - self.imu_first_sample_time).nanoseconds / 1e9 >= self.IMU_WARMUP_S
+            and (self.get_clock().now() - self.last_imu_time).nanoseconds / 1e9 <= self.IMU_TIMEOUT_S
         )
 
-        if abs(vw_comandado) > self.VW_LOCK_THRESHOLD or not imu_pronta:
+        if not imu_pronta or not self.imu_valid:
+            self.heading_locked = False
+            self.yaw_integral = 0.0
+            self.yaw_last_error = 0.0
+            return vw_comandado
+
+        if abs(vw_comandado) > self.VW_TURN_OVERRIDE_THRESHOLD:
             self.heading_locked = False
             self.yaw_integral = 0.0
             self.yaw_last_error = 0.0
@@ -201,6 +304,7 @@ def main(args=None):
         pass
     finally:
         node.send_serial(0.0, 0.0, 0.0, 0.0)
+        node.motor_serial.close()
         node.destroy_node()
         rclpy.shutdown()
 
