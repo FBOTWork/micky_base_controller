@@ -19,7 +19,7 @@ def generate_launch_description():
         name='inverse_kinematic_node',
         output='screen',
         parameters=[
-            {'motor_port': '/dev/base_controller'},
+            {'motor_port': '/dev/stm_controller'},
             {'motor_baud': 115200},
             {'imu_frame_id': 'imu_link'}
         ]
