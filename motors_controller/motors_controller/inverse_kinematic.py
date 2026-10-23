@@ -72,13 +72,11 @@ class InverseKinematic(Node):
 
         self.declare_parameter("motor_port", "/dev/base_controller")
         self.declare_parameter("motor_baud", 115200)
-        self.declare_parameter("imu_frame_id", "imu_link")
         self.declare_parameter("imu_front_frame_id", "imu_front_link")
         self.declare_parameter("imu_rear_frame_id", "imu_rear_link")
 
         motor_port = self.get_parameter("motor_port").get_parameter_value().string_value
         motor_baud = self.get_parameter("motor_baud").get_parameter_value().integer_value
-        self.imu_frame_id = self.get_parameter("imu_frame_id").get_parameter_value().string_value
         self.imu_frame_ids = {
             "IMU_F": self.get_parameter("imu_front_frame_id").get_parameter_value().string_value,
             "IMU_R": self.get_parameter("imu_rear_frame_id").get_parameter_value().string_value,
@@ -88,7 +86,6 @@ class InverseKinematic(Node):
         self.get_logger().info(f"Motor (STM32) conectado em {self.motor_serial.port} a {motor_baud} bps")
 
         self.subscription = self.create_subscription(Twist, "/cmd_vel", self.cmd_vel_callback, 10)
-        self.imu_publisher = self.create_publisher(Imu, "/imu/data_raw", 10)
         self.imu_publishers = {
             "IMU_F": self.create_publisher(Imu, "/imu/front/data_raw", 10),
             "IMU_R": self.create_publisher(Imu, "/imu/rear/data_raw", 10),
@@ -119,32 +116,6 @@ class InverseKinematic(Node):
                 port = self.find_serial_port(port)
         raise SystemExit
 
-    def imu_callback(self, msg: Imu):
-        qx = msg.orientation.x
-        qy = msg.orientation.y
-        qz = msg.orientation.z
-        qw = msg.orientation.w
-
-        if not all(math.isfinite(value) for value in (qx, qy, qz, qw)):
-            self.imu_valid = False
-            return
-
-        quaternion = self.normalizar_quaternion(qx, qy, qz, qw)
-        if quaternion is None:
-            self.imu_valid = False
-            return
-
-        qx, qy, qz, qw = quaternion
-        self.current_yaw = math.atan2(
-            2.0 * (qw * qz + qx * qy),
-            1.0 - 2.0 * (qy * qy + qz * qz),
-        )
-        now = self.get_clock().now()
-        if self.imu_first_sample_time is None:
-            self.imu_first_sample_time = now
-        self.last_imu_time = now
-        self.imu_valid = True
-
     def read_imu_serial(self):
         try:
             available = self.motor_serial.in_waiting
@@ -160,7 +131,7 @@ class InverseKinematic(Node):
 
             if self.imu_nova_amostra:
                 self.imu_nova_amostra = False
-                self.publicar_imu_fundida()
+                self.atualizar_yaw_fundido()
 
             if len(self.imu_rx_buffer) > self.IMU_RX_BUFFER_LIMIT:
                 self.imu_rx_buffer.clear()
@@ -227,34 +198,29 @@ class InverseKinematic(Node):
         ]
         return msg
 
-    def publicar_imu_fundida(self):
-        # Média das IMUs com amostra recente; se uma cair, segue só com a outra
+    def atualizar_yaw_fundido(self):
+        # Média circular do yaw das IMUs com amostra recente; se uma cair, segue só com a outra
         now = self.get_clock().now()
-        amostras = [
-            self.imu_ultima_amostra[prefixo]
-            for prefixo, tempo in self.imu_ultimo_tempo.items()
-            if tempo is not None and (now - tempo).nanoseconds / 1e9 <= self.IMU_TIMEOUT_S
-        ]
-        if not amostras:
+        yaws = []
+        for prefixo, tempo in self.imu_ultimo_tempo.items():
+            if tempo is None or (now - tempo).nanoseconds / 1e9 > self.IMU_TIMEOUT_S:
+                continue
+            qx, qy, qz, qw = self.imu_ultima_amostra[prefixo][:4]
+            yaws.append(math.atan2(
+                2.0 * (qw * qz + qx * qy),
+                1.0 - 2.0 * (qy * qy + qz * qz),
+            ))
+        if not yaws:
             return
 
-        referencia = amostras[0][:4]
-        quaternion = [0.0, 0.0, 0.0, 0.0]
-        resto = [0.0] * 6
-        for data in amostras:
-            # q e -q representam a mesma rotação: alinha o sinal antes de somar
-            sinal = 1.0 if sum(a * b for a, b in zip(data[:4], referencia)) >= 0.0 else -1.0
-            quaternion = [acc + sinal * value for acc, value in zip(quaternion, data[:4])]
-            resto = [acc + value for acc, value in zip(resto, data[4:])]
-
-        quaternion = self.normalizar_quaternion(*quaternion)
-        if quaternion is None:
-            return
-
-        fundida = list(quaternion) + [value / len(amostras) for value in resto]
-        msg = self.montar_msg_imu(fundida, self.imu_frame_id)
-        self.imu_callback(msg)
-        self.imu_publisher.publish(msg)
+        self.current_yaw = math.atan2(
+            sum(math.sin(yaw) for yaw in yaws),
+            sum(math.cos(yaw) for yaw in yaws),
+        )
+        if self.imu_first_sample_time is None:
+            self.imu_first_sample_time = now
+        self.last_imu_time = now
+        self.imu_valid = True
 
     @staticmethod
     def normalizar_angulo(angulo):

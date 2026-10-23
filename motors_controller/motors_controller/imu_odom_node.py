@@ -28,7 +28,7 @@ class ImuOdomNode(Node):
         self.odom_pub = self.create_publisher(Odometry, "/odom", 10)
 
         self.cmd_vel_sub = self.create_subscription(Twist, "/cmd_vel", self.cmd_vel_callback, 10)
-        self.imu_sub = self.create_subscription(Imu, "/imu/data_raw", self.imu_callback, 10)
+        self.imu_sub = self.create_subscription(Imu, "/imu/front/data_raw", self.imu_callback, 10)
 
         
         self.timer = self.create_timer(0.02, self.update_odometry)

@@ -25,7 +25,6 @@ def generate_launch_description():
         parameters=[
             {'motor_port': '/dev/stm_controller'},
             {'motor_baud': 115200},
-            {'imu_frame_id': 'imu_link'},
             {'imu_front_frame_id': 'imu_front_link'},
             {'imu_rear_frame_id': 'imu_rear_link'}
         ]
