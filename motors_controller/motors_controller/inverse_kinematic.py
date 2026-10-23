@@ -39,6 +39,10 @@ class InverseKinematic(Node):
         self.last_imu_time = None
         self.imu_valid = False
         self.imu_rx_buffer = bytearray()
+        self.IMU_RX_BUFFER_LIMIT = 2048
+        self.imu_ultima_amostra = {"IMU_F": None, "IMU_R": None}
+        self.imu_ultimo_tempo = {"IMU_F": None, "IMU_R": None}
+        self.imu_nova_amostra = False
 
         self.current_yaw = 0.0
         self.target_heading = 0.0
@@ -69,16 +73,26 @@ class InverseKinematic(Node):
         self.declare_parameter("motor_port", "/dev/base_controller")
         self.declare_parameter("motor_baud", 115200)
         self.declare_parameter("imu_frame_id", "imu_link")
+        self.declare_parameter("imu_front_frame_id", "imu_front_link")
+        self.declare_parameter("imu_rear_frame_id", "imu_rear_link")
 
         motor_port = self.get_parameter("motor_port").get_parameter_value().string_value
         motor_baud = self.get_parameter("motor_baud").get_parameter_value().integer_value
         self.imu_frame_id = self.get_parameter("imu_frame_id").get_parameter_value().string_value
+        self.imu_frame_ids = {
+            "IMU_F": self.get_parameter("imu_front_frame_id").get_parameter_value().string_value,
+            "IMU_R": self.get_parameter("imu_rear_frame_id").get_parameter_value().string_value,
+        }
 
         self.motor_serial = self.open_serial(self.find_serial_port(motor_port), motor_baud)
         self.get_logger().info(f"Motor (STM32) conectado em {self.motor_serial.port} a {motor_baud} bps")
 
         self.subscription = self.create_subscription(Twist, "/cmd_vel", self.cmd_vel_callback, 10)
         self.imu_publisher = self.create_publisher(Imu, "/imu/data_raw", 10)
+        self.imu_publishers = {
+            "IMU_F": self.create_publisher(Imu, "/imu/front/data_raw", 10),
+            "IMU_R": self.create_publisher(Imu, "/imu/rear/data_raw", 10),
+        }
 
         self.watchdog_timer = self.create_timer(0.1, self.watchdog_check)
         self.imu_read_timer = self.create_timer(0.02, self.read_imu_serial)
@@ -144,7 +158,11 @@ class InverseKinematic(Node):
                 if line:
                     self.process_imu_line(line)
 
-            if len(self.imu_rx_buffer) > 512:
+            if self.imu_nova_amostra:
+                self.imu_nova_amostra = False
+                self.publicar_imu_fundida()
+
+            if len(self.imu_rx_buffer) > self.IMU_RX_BUFFER_LIMIT:
                 self.imu_rx_buffer.clear()
                 self.get_logger().warn("Buffer serial da IMU excedeu o limite; dados descartados.")
         except serial.SerialException as exc:
@@ -152,15 +170,15 @@ class InverseKinematic(Node):
             self.get_logger().warn(f"Erro lendo IMU pela serial do STM32: {exc}", throttle_duration_sec=5.0)
 
     def process_imu_line(self, line):
-        if line.startswith("IMU_STATUS:"):
+        if line.startswith("STATUS:"):
             self.get_logger().info(f"STM32 {line}", throttle_duration_sec=5.0)
             return
 
-        if "IMU:" not in line:
+        prefixo, separador, payload = line.partition(":")
+        if not separador or prefixo not in self.imu_publishers:
             return
 
-        payload = line.split("IMU:", 1)[1].replace(";", "").strip()
-        parts = payload.split(",")
+        parts = payload.replace(";", "").strip().split(",")
         if len(parts) != 10:
             self.get_logger().warn(f"Linha de IMU inválida: {line}", throttle_duration_sec=5.0)
             return
@@ -175,9 +193,20 @@ class InverseKinematic(Node):
             self.get_logger().warn(f"Valores não finitos na linha da IMU: {line}", throttle_duration_sec=5.0)
             return
 
+        quaternion = self.normalizar_quaternion(*data[:4])
+        if quaternion is None:
+            return
+        data[:4] = quaternion
+
+        self.imu_ultima_amostra[prefixo] = data
+        self.imu_ultimo_tempo[prefixo] = self.get_clock().now()
+        self.imu_nova_amostra = True
+        self.imu_publishers[prefixo].publish(self.montar_msg_imu(data, self.imu_frame_ids[prefixo]))
+
+    def montar_msg_imu(self, data, frame_id):
         msg = Imu()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = self.imu_frame_id
+        msg.header.frame_id = frame_id
         msg.orientation.x, msg.orientation.y, msg.orientation.z, msg.orientation.w = data[:4]
         msg.orientation_covariance = [
             0.05, 0.0, 0.0,
@@ -196,6 +225,34 @@ class InverseKinematic(Node):
             0.0, 0.04, 0.0,
             0.0, 0.0, 0.04,
         ]
+        return msg
+
+    def publicar_imu_fundida(self):
+        # Média das IMUs com amostra recente; se uma cair, segue só com a outra
+        now = self.get_clock().now()
+        amostras = [
+            self.imu_ultima_amostra[prefixo]
+            for prefixo, tempo in self.imu_ultimo_tempo.items()
+            if tempo is not None and (now - tempo).nanoseconds / 1e9 <= self.IMU_TIMEOUT_S
+        ]
+        if not amostras:
+            return
+
+        referencia = amostras[0][:4]
+        quaternion = [0.0, 0.0, 0.0, 0.0]
+        resto = [0.0] * 6
+        for data in amostras:
+            # q e -q representam a mesma rotação: alinha o sinal antes de somar
+            sinal = 1.0 if sum(a * b for a, b in zip(data[:4], referencia)) >= 0.0 else -1.0
+            quaternion = [acc + sinal * value for acc, value in zip(quaternion, data[:4])]
+            resto = [acc + value for acc, value in zip(resto, data[4:])]
+
+        quaternion = self.normalizar_quaternion(*quaternion)
+        if quaternion is None:
+            return
+
+        fundida = list(quaternion) + [value / len(amostras) for value in resto]
+        msg = self.montar_msg_imu(fundida, self.imu_frame_id)
         self.imu_callback(msg)
         self.imu_publisher.publish(msg)
 
