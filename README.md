@@ -82,7 +82,7 @@ instructions below apply only to older setups with a separate USB IMU
 controller.
 
 The robot has **two** USB-serial devices that must resolve to different,
-stable names: the motors Arduino (`/dev/arduino_robo`) and the IMU
+stable names: the motors controller (`/dev/stm_controller`) and the IMU
 (`/dev/arduino_imu`).
 
 ⚠️ **Both currently use the same CH340 USB-serial chip**
@@ -144,7 +144,7 @@ sudo udevadm trigger
 ### 🔹 Test
 
 ```bash
-ls -l /dev/arduino_robo /dev/arduino_imu
+ls -l /dev/stm_controller /dev/arduino_imu
 ```
 
 For the current STM32 setup, `/dev/base_controller` should exist. The

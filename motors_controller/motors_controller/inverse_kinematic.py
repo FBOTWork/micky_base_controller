@@ -70,7 +70,7 @@ class InverseKinematic(Node):
         self.ACCEL_CALIB_SAMPLES_N = 50
         self.accel_x_bias = 0.0
 
-        self.declare_parameter("motor_port", "/dev/base_controller")
+        self.declare_parameter("motor_port", "/dev/stm_controller")
         self.declare_parameter("motor_baud", 115200)
         self.declare_parameter("imu_front_frame_id", "imu_front_link")
         self.declare_parameter("imu_rear_frame_id", "imu_rear_link")
