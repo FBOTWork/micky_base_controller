@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+import math
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
-import math
 
 
 class ImuOdomNode(Node):
@@ -28,7 +28,7 @@ class ImuOdomNode(Node):
         self.odom_pub = self.create_publisher(Odometry, "/odom", 10)
 
         self.cmd_vel_sub = self.create_subscription(Twist, "/cmd_vel", self.cmd_vel_callback, 10)
-        self.imu_sub = self.create_subscription(Imu, "/imu/data_raw", self.imu_callback, 10)
+        self.imu_sub = self.create_subscription(Imu, "/imu/front/data_raw", self.imu_callback, 10)
 
         
         self.timer = self.create_timer(0.02, self.update_odometry)
@@ -46,12 +46,23 @@ class ImuOdomNode(Node):
         qz = msg.orientation.z
         qw = msg.orientation.w
 
-        
+        if not all(math.isfinite(value) for value in (qx, qy, qz, qw)):
+            return
+
+        norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+        if not math.isfinite(norm) or norm < 1e-9:
+            return
+
+        qx /= norm
+        qy /= norm
+        qz /= norm
+        qw /= norm
+
         self.yaw = math.atan2(
             2.0 * (qw * qz + qx * qy),
             1.0 - 2.0 * (qy * qy + qz * qz),
         )
-        
+
         self.v_yaw = msg.angular_velocity.z
 
     def update_odometry(self):

@@ -9,9 +9,9 @@ This repository contains the base control for the Micky robot, including firmwar
 ## 🧠 Overview
 
 * **ROS2** → control and decision making
-* **Arduino Mega** → execution (motors)
+* **STM32F103** → motor control and MPU6050 IMU acquisition
 
-The Arduino runs the `firmware.ino`, responsible for interpreting received commands and controlling the robot.
+The STM32 firmware receives motor commands and sends IMU data over the same USB serial connection.
 
 ---
 
@@ -73,6 +73,13 @@ firmware_micro_controller/firmware.ino
 ---
 
 ## ⚙️ 3. Configure USB Port (udev)
+
+**Current STM32 setup (IMU connected directly to the STM32):** configure only
+`/dev/base_controller` for the STM32 USB serial device. The STM32 sends both
+motor commands and IMU samples through this same USB connection. Do not start
+the standalone `imu_serial_publisher` for this setup. The two-device
+instructions below apply only to older setups with a separate USB IMU
+controller.
 
 The robot has **two** USB-serial devices that must resolve to different,
 stable names: the motors controller (`/dev/stm_controller`) and the IMU
@@ -140,7 +147,9 @@ sudo udevadm trigger
 ls -l /dev/stm_controller /dev/arduino_imu
 ```
 
-Both should exist and point to different `ttyUSB*`/`ttyACM*` devices.
+For the current STM32 setup, `/dev/base_controller` should exist. The
+`/dev/arduino_robo` and `/dev/arduino_imu` names are only needed for the older
+two-device setup.
 
 ---
 
@@ -197,8 +206,11 @@ ros2 launch motors_controller motors_controller.launch.py
 ### 🔸 Sensors (IMU)
 
 ```bash
-ros2 launch robot_sensors_publisher imu_sensor_publisher.launch.py
+ros2 topic echo /imu/data_raw
 ```
+
+With the IMU connected to the STM32, the motor-controller launch already
+publishes `/imu/data_raw`; do not launch the standalone IMU serial publisher.
 
 ---
 
@@ -239,7 +251,7 @@ ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.2}, angular: {z:
 ## ⚙️ 8. Check Data
 
 ```bash
-ros2 topic echo /imu/data
+ros2 topic echo /imu/data_raw
 ros2 topic echo /wheel_encoders
 ```
 
