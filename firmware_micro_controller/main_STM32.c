@@ -49,6 +49,9 @@ typedef struct {
     float roll, pitch, yaw;
     uint8_t whoami;
     uint32_t falhas;
+    bool presente;              // detectada no boot; se false, é ignorada até reiniciar
+    uint32_t ultima_leitura;
+    uint32_t proxima_leitura;
     const char* prefix;
 } MPU_State;
 
@@ -290,11 +293,20 @@ void MPU6050_Calibrar(MPU_State* imu) {
 void MPU6050_Init(void) {
     HAL_Delay(100);
     
-    if (!MPU6050_Configurar(&imuFront)) { I2C_Recuperar_Barramento(&imuFront); MPU6050_Configurar(&imuFront); }
-    if (!MPU6050_Configurar(&imuRear))  { I2C_Recuperar_Barramento(&imuRear);  MPU6050_Configurar(&imuRear); }
+    MPU_State* imus[] = {&imuFront, &imuRear};
 
-    MPU6050_Calibrar(&imuFront);
-    MPU6050_Calibrar(&imuRear);
+    for (int i = 0; i < 2; i++) {
+        imus[i]->presente = MPU6050_Configurar(imus[i]);
+        if (!imus[i]->presente) {
+            I2C_Recuperar_Barramento(imus[i]);
+            imus[i]->presente = MPU6050_Configurar(imus[i]);
+        }
+    }
+
+    // IMU ausente não é calibrada nem lida: evita ~9 s de timeouts no boot
+    for (int i = 0; i < 2; i++) {
+        if (imus[i]->presente) MPU6050_Calibrar(imus[i]);
+    }
 }
 
 bool MPU6050_Read(MPU_State* imu, float dt) {
@@ -424,7 +436,9 @@ int main(void)
   MPU6050_Init();
   HAL_TIM_Base_Start_IT(&htim3);
 
-  uint32_t last_imu_time = HAL_GetTick();
+  // Escalona as IMUs em 10 ms: nunca são lidas na mesma passagem do loop
+  imuFront.proxima_leitura = HAL_GetTick() + 20;
+  imuRear.proxima_leitura  = HAL_GetTick() + 30;
   uint32_t last_status_time = HAL_GetTick();
   /* USER CODE END 2 */
 
@@ -470,22 +484,19 @@ int main(void)
     }
 
     uint32_t now = HAL_GetTick();
-    if (now - last_imu_time >= 20) {
-        float dt = (now - last_imu_time) / 1000.0f;
-        if (dt > 0.1f) dt = 0.02f; 
-        
-        last_imu_time = now;
-        
-        // Leitura e publicação Front
-        if (MPU6050_Read(&imuFront, dt)) {
-            Publicar_IMU_USB(&imuFront);
-        }
-        
-        HAL_Delay(1); // Breve delay para a porta serial (CDC) liberar
-        
-        // Leitura e publicação Rear
-        if (MPU6050_Read(&imuRear, dt)) {
-            Publicar_IMU_USB(&imuRear);
+    MPU_State* imus[] = {&imuFront, &imuRear};
+    for (int i = 0; i < 2; i++) {
+        MPU_State* imu = imus[i];
+        if (!imu->presente || (int32_t)(now - imu->proxima_leitura) < 0) continue;
+
+        float dt = (now - imu->ultima_leitura) / 1000.0f;
+        if (dt > 0.1f) dt = 0.02f;
+
+        imu->ultima_leitura = now;
+        imu->proxima_leitura = now + 20;
+
+        if (MPU6050_Read(imu, dt)) {
+            Publicar_IMU_USB(imu);
         }
     }
 
